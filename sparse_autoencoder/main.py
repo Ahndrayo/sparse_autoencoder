@@ -4,13 +4,27 @@ import transformer_lens
 import sparse_autoencoder
 import os, json
 import numpy as np
+import argparse
+from pathlib import Path
 from utils.run_dirs import make_analysis_run_dir
 
 # Extract neuron activations with transformer_lens
 model = transformer_lens.HookedTransformer.from_pretrained("gpt2", center_writing_weights=False)
 device = next(model.parameters()).device
 
-prompt = "This is an example of a prompt that"
+# Get prompt
+parser = argparse.ArgumentParser()
+parser.add_argument("--prompt-file", type=str, default=None,
+                    help="Path to a text file containing the input prompt.")
+args = parser.parse_args()
+
+if args.prompt_file:
+    prompt_path = Path(args.prompt_file)
+    prompt = prompt_path.read_text(encoding="utf-8").strip()
+    print(f"Loaded prompt from {prompt_path}")
+else:
+    raise ValueError("Please provide a --prompt-file argument (e.g. prompts/universal_probe.txt)")
+
 tokens = model.to_tokens(prompt)  # (1, n_tokens)
 with torch.no_grad():
     logits, activation_cache = model.run_with_cache(tokens, remove_batch_dim=True)
