@@ -109,6 +109,7 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+.vscode/
 
 # Spyder project settings
 .spyderproject
@@ -127,3 +128,13 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# Utilities
+sparse_autoencoder/utils/
+viz_analysis/utils/
+
+# Data from using SAEs
+outdated_viewer/
+analysis_data/
+sparse_autoencoder/prompts/
+viz_analysis/Data/
