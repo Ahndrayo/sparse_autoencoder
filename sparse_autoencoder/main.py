@@ -92,3 +92,18 @@ for j in range(num_to_dump):
         json.dump(atom_payload, f, indent=2)
 
 print("Wrote viewer files to:", out_dir)
+
+# Save data for inpsecting meaning of features
+save_dir = os.path.join(repo_root, "analysis_data")
+os.makedirs(save_dir, exist_ok=True)
+
+np.save(os.path.join(save_dir, "latent_activations.npy"),
+        latent_activations.detach().cpu().numpy())
+np.save(os.path.join(save_dir, "tokens.npy"),
+        tokens.detach().cpu().numpy())
+
+# Optional: save the prompt string for reference
+with open(os.path.join(save_dir, "prompt.txt"), "w") as f:
+    f.write(prompt)
+
+print("Saved analysis data to:", save_dir)
