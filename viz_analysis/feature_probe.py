@@ -1,11 +1,18 @@
 # viz_analysis/feature_probe.py
 import numpy as np
+from pathlib import Path
 from transformer_lens import HookedTransformer
+from utils.run_picker import get_latest_run
 
 # Load saved data
-lat = np.load("../analysis_data/latent_activations.npy")   # [T, M]
-tok_ids = np.load("../analysis_data/tokens.npy")
-with open("../analysis_data/prompt.txt") as f:
+repo_root = Path(__file__).resolve().parent.parent
+analysis_dir = repo_root / "analysis_data"
+latest_run = get_latest_run(analysis_dir)
+print("Loading data from: ", latest_run)
+
+lat = np.load(latest_run / "latent_activations.npy")  # [T, M]
+tok_ids = np.load(latest_run / "tokens.npy")
+with open(latest_run / "prompt.txt", "r") as f:
     prompt = f.read().strip()
 
 # Rebuild model only to decode tokens (no need for SAE)
