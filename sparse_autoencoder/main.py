@@ -7,6 +7,16 @@ import numpy as np
 import argparse
 from pathlib import Path
 from utils.run_dirs import make_analysis_run_dir
+import pandas as pd
+
+import kagglehub
+
+# Download latest version (cached by kagglehub, so this is cheap on reruns)
+path = kagglehub.dataset_download("miguelaenlle/massive-stock-news-analysis-db-for-nlpbacktests")
+print("Path to dataset files:", path)
+dataset_dir = Path(path)
+dataset_csv = dataset_dir / "analyst_ratings_processed.csv"
+KAGGLE_TEXT_COLUMN = "title"
 
 # Extract neuron activations with transformer_lens
 model = transformer_lens.HookedTransformer.from_pretrained("gpt2", center_writing_weights=False)
@@ -16,6 +26,8 @@ device = next(model.parameters()).device
 parser = argparse.ArgumentParser()
 parser.add_argument("--prompt-file", type=str, default=None,
                     help="Path to a text file containing the input prompt.")
+parser.add_argument("--kaggle-row", type=int, default=0,
+                    help="Row index from the Kaggle dataset to use when no prompt file is provided.")
 args = parser.parse_args()
 
 if args.prompt_file:
@@ -23,14 +35,23 @@ if args.prompt_file:
     prompt = prompt_path.read_text(encoding="utf-8").strip()
     print(f"Loaded prompt from {prompt_path}")
 else:
-    raise ValueError("Please provide a --prompt-file argument (e.g. prompts/universal_probe.txt)")
+    if not dataset_csv.exists():
+        raise FileNotFoundError(f"Expected dataset CSV at {dataset_csv} but it was not found.")
+    df = pd.read_csv(dataset_csv)
+    if KAGGLE_TEXT_COLUMN not in df.columns:
+        raise ValueError(f"Column '{KAGGLE_TEXT_COLUMN}' not found in {dataset_csv.name}")
+    if args.kaggle_row < 0 or args.kaggle_row >= len(df):
+        raise ValueError(f"--kaggle-row must be between 0 and {len(df) - 1}")
+    prompt = str(df.iloc[args.kaggle_row][KAGGLE_TEXT_COLUMN]).strip()
+    print(f"Loaded prompt from Kaggle dataset row {args.kaggle_row} ({dataset_csv.name})")
 
 tokens = model.to_tokens(prompt)  # (1, n_tokens)
 with torch.no_grad():
     logits, activation_cache = model.run_with_cache(tokens, remove_batch_dim=True)
 
-layer_index = 6
+layer_index = 8
 location = "resid_post_mlp"
+# location = "mlp-post-act"
 
 transformer_lens_loc = {
     "mlp_post_act": f"blocks.{layer_index}.mlp.hook_post",
