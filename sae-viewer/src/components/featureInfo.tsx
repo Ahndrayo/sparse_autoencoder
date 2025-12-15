@@ -136,14 +136,30 @@ export default ({ feature }: {feature: Feature}) => {
           <table style={{fontSize: '12px'}} className="activations-table" >
             <thead>
             <tr>
-            <th>Doc ID</th><th>Token</th><th>Activation</th><th>Activations</th>
+            <th>Doc ID</th><th>Activation</th><th>Prompt</th><th>Activations</th>
             {sequences.length && sequences[0].ablate_loss_diff && <th>Effects</th>}
             </tr>
             </thead>
             <tbody>
             {sequences.slice(0, n_show).map((sequence, i) => (
               <tr key={i}>
-              <td className="center">{sequence.doc_id}</td><td className="center">{sequence.idx}</td><td className="center">{sequence.act.toFixed(2)}</td>
+              <td className="center">{sequence.doc_id}</td><td className="center">{sequence.act.toFixed(2)}</td>
+              <td className="prompt-cell p-2">
+                <div className="prompt-inline">
+                  {(sequence.prompt_tokens || []).length > 0 ? (
+                    (sequence.prompt_tokens || []).map((tok, idx) => (
+                      <span
+                        key={`${sequence.doc_id}-${idx}`}
+                        className={idx === sequence.idx ? "prompt-token highlight" : "prompt-token"}
+                      >
+                        {tok}
+                      </span>
+                    ))
+                  ) : (
+                    <span>{sequence.prompt || sequence.prompt_snippet || "—"}</span>
+                  )}
+                </div>
+              </td>
               <td className="p-2">
                   <TokenHeatmap info={sequence} renderNewlines={renderNewlines}/>
               </td>

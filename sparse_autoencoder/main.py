@@ -36,6 +36,7 @@ class FeatureStatsAggregator:
         self.sum_activations = torch.zeros(feature_dim, dtype=torch.float64)
         self.max_activations = torch.zeros(feature_dim, dtype=torch.float64)
         self.nonzero_counts = torch.zeros(feature_dim, dtype=torch.float64)
+        self.sum_of_squares = torch.zeros(feature_dim, dtype=torch.float64)
 
     def update(self, latents: torch.Tensor) -> None:
         if latents.numel() == 0:
@@ -45,6 +46,7 @@ class FeatureStatsAggregator:
         self.sum_activations += latents.sum(dim=0)
         self.max_activations = torch.maximum(self.max_activations, latents.max(dim=0).values)
         self.nonzero_counts += (latents > 0).sum(dim=0).to(torch.float64)
+        self.sum_of_squares += (latents ** 2).sum(dim=0)
 
     def safe_total_tokens(self) -> int:
         return max(self.total_tokens, 1)
@@ -88,6 +90,9 @@ class FeatureStatsAggregator:
                 "description": metric.description,
                 "top_features": top_entries,
             }
+
+        mean_sq = (self.sum_of_squares / self.safe_total_tokens()).detach().cpu().numpy()
+        summary["mean_act_squared"] = mean_sq.tolist()
 
         return summary
 
@@ -141,6 +146,7 @@ class FeatureTopTokenTracker:
         prompt_index: int,
         row_id: int | str,
         prompt_text: str,
+        prompt_tokens: list[str],
     ) -> None:
         if latents.numel() == 0:
             return
@@ -162,11 +168,13 @@ class FeatureTopTokenTracker:
                 metadata = {
                     "activation": activation,
                     "token_str": token_str,
+                        "token_id": token_id,
                     "token_position": int(token_pos),
                     "prompt_index": int(prompt_index),
                     "row_id": row_id,
                     "prompt_snippet": prompt_snippet,
                 }
+                metadata["prompt_tokens"] = prompt_tokens
                 self._push(feature_id, activation, metadata)
 
     def export(self, feature_ids: List[int]) -> dict[str, list[dict[str, object]]]:
@@ -246,7 +254,7 @@ else:
         use_chunking = True
         prompt_entries = None  # Will be processed chunk by chunk
 
-layer_index = 8
+layer_index = 6
 location = "resid_post_mlp"
 # location = "mlp-post-act"
 
@@ -307,6 +315,7 @@ def process_prompt_batch(prompt_entries_batch, next_prompt_index: int):
 
         latents_cpu = latent_activations.detach().cpu()
         tokens_cpu = tokens.detach().cpu()
+        prompt_tokens_list = model.to_str_tokens(prompt)
 
         feature_stats.update(latents_cpu)
         top_token_tracker.update(
@@ -315,6 +324,7 @@ def process_prompt_batch(prompt_entries_batch, next_prompt_index: int):
             prompt_index=prompt_index,
             row_id=row_idx,
             prompt_text=prompt,
+            prompt_tokens=prompt_tokens_list,
         )
 
         batch_processed_prompts.append(
@@ -334,7 +344,7 @@ next_prompt_index = 0
 prompts_file_path = run_dir / "prompts.jsonl"
 
 if use_chunking:
-    print(f"Processing dataset in chunks of {args.chunk_size} rows...")
+    print(f"Processing dataset of {args.max_rows} in chunks of {args.chunk_size} rows...")
     df_header = pd.read_csv(dataset_csv, nrows=0)
     if KAGGLE_TEXT_COLUMN not in df_header.columns:
         raise ValueError(f"Column '{KAGGLE_TEXT_COLUMN}' not found in {dataset_csv.name}")

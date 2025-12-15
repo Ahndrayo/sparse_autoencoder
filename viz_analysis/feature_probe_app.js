@@ -67,9 +67,13 @@
       metric
     );
 
+    const tokensRequestId = React.useRef(0);
+
     const fetchTokens = (featureId, overrideTopK) => {
       if (featureId == null) return;
       setTokenState({ loading: true, error: null });
+      const requestId = ++tokensRequestId.current;
+
       fetch(`/api/feature?id=${featureId}&top_k=${overrideTopK ?? topK}`)
         .then(async (res) => {
           if (!res.ok) {
@@ -78,6 +82,9 @@
           return res.json();
         })
         .then((payload) => {
+          if (tokensRequestId.current !== requestId) {
+            return;
+          }
           setSelectedFeature(featureId);
           setTopTokens(payload.tokens);
           setTokenState({ loading: false, error: null });

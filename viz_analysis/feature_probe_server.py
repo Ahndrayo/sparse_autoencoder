@@ -19,6 +19,7 @@ from urllib.parse import parse_qs, urlparse
 from utils.run_picker import get_latest_run
 
 STATIC_DIR = Path(__file__).resolve().parent
+HIST_BIN_WIDTH = 0.2
 
 
 @dataclass
@@ -26,6 +27,8 @@ class FeatureProbeData:
     run_path: Path
     feature_stats: dict[str, Any]
     feature_tokens: dict[str, list[dict[str, Any]]]
+    mean_act_squared: list[float]
+    feature_metrics_map: dict[int, dict[str, float]]
 
     @classmethod
     def load(cls, repo_root: Path) -> "FeatureProbeData":
@@ -53,13 +56,24 @@ class FeatureProbeData:
                 "token lookups will be unavailable."
             )
 
+        feature_metrics_map: dict[int, dict[str, float]] = {}
+        for metric_block in feature_stats.get("metrics", {}).values():
+            for entry in metric_block.get("top_features", []):
+                fid = int(entry["feature_id"])
+                feature_metrics_map.setdefault(fid, entry.get("metrics", {}))
         metric_names = feature_stats.get("metrics", {}).keys()
         print(
             "[feature_probe_server] Loaded metrics:",
             ", ".join(metric_names) if metric_names else "(none)",
         )
 
-        return cls(run_path=run_path, feature_stats=feature_stats, feature_tokens=feature_tokens)
+        return cls(
+            run_path=run_path,
+            feature_stats=feature_stats,
+            feature_tokens=feature_tokens,
+            mean_act_squared=feature_stats.get("mean_act_squared", []),
+            feature_metrics_map=feature_metrics_map,
+        )
 
     @property
     def metrics_available(self) -> list[str]:
@@ -108,6 +122,59 @@ class FeatureProbeData:
             "tokens": tokens[:top_k],
         }
 
+    def _build_hist(self, feature_id: int) -> dict[str, int]:
+        hist: dict[str, int] = {}
+        for entry in self.feature_tokens.get(str(feature_id), []):
+            activation = entry.get("activation", 0.0)
+            bin_index = int(activation // HIST_BIN_WIDTH)
+            hist[str(bin_index)] = hist.get(str(bin_index), 0) + 1
+        if not hist:
+            hist["0"] = 0
+        return hist
+
+    def _make_sequence(self, entry: dict[str, Any], density: float) -> dict[str, Any]:
+        token_id = entry.get("token_id")
+        row_id = entry.get("row_id")
+        return {
+            "density": density,
+            "doc_id": int(row_id) if isinstance(row_id, int) else -1,
+            "idx": int(entry.get("token_position", 0)),
+            "acts": [entry.get("activation", 0.0)],
+            "act": entry.get("activation", 0.0),
+            "tokens": [entry.get("token_str", "")],
+            "token_ints": [int(token_id) if token_id is not None else -1],
+            "prompt_snippet": entry.get("prompt_snippet", ""),
+            "prompt": entry.get("prompt", ""),
+            "prompt_tokens": entry.get("prompt_tokens", []),
+        }
+
+    def get_feature_info(self, feature_id: int, top_k: int = 10) -> dict[str, Any]:
+        metrics = self.feature_metrics_map.get(feature_id)
+        if metrics is None:
+            raise ValueError(f"No metric snapshot stored for feature {feature_id}")
+
+        mean_act = metrics.get("mean_activation", 0.0)
+        density = metrics.get("fraction_active", 0.0)
+        mean_sq = (
+            self.mean_act_squared[feature_id]
+            if 0 <= feature_id < len(self.mean_act_squared)
+            else mean_act ** 2
+        )
+
+        tokens = self.feature_tokens.get(str(feature_id), [])
+        sequences = [self._make_sequence(entry, density) for entry in tokens]
+        top_sequences = sequences[: min(top_k, len(sequences))]
+        random_sequences = sequences[::-1][: min(top_k, len(sequences))]
+
+        return {
+            "density": density,
+            "mean_act": mean_act,
+            "mean_act_squared": mean_sq,
+            "hist": self._build_hist(feature_id),
+            "top": top_sequences,
+            "random": random_sequences,
+        }
+
 
 class FeatureProbeRequestHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, data_store: FeatureProbeData, **kwargs):
@@ -120,10 +187,21 @@ class FeatureProbeRequestHandler(SimpleHTTPRequestHandler):
     def _send_json(self, payload: dict[str, Any], status: int = 200) -> None:
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status)
+        self._set_cors_headers()
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _set_cors_headers(self) -> None:
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+
+    def do_OPTIONS(self) -> None:  # noqa: N802
+        self.send_response(200)
+        self._set_cors_headers()
+        self.end_headers()
 
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
@@ -157,6 +235,20 @@ class FeatureProbeRequestHandler(SimpleHTTPRequestHandler):
             top_k = int(params.get("top_k", ["10"])[0])
             try:
                 data = self.data_store.get_feature_tokens(int(feature_id[0]), top_k=top_k)
+                self._send_json(data)
+            except Exception as exc:  # noqa: BLE001
+                self._send_json({"error": str(exc)}, status=400)
+            return
+
+        if parsed.path == "/api/feature_info":
+            params = parse_qs(parsed.query)
+            feature_id = params.get("id")
+            if feature_id is None:
+                self._send_json({"error": "Missing 'id' query parameter"}, status=400)
+                return
+            top_k = int(params.get("top_k", ["10"])[0])
+            try:
+                data = self.data_store.get_feature_info(int(feature_id[0]), top_k=top_k)
                 self._send_json(data)
             except Exception as exc:  # noqa: BLE001
                 self._send_json({"error": str(exc)}, status=400)

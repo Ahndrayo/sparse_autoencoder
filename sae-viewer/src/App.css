@@ -186,6 +186,131 @@ img#logo {
 body { counter-reset: count; }
 p { whitespace: nowrap; }
 
+.app-shell {
+  display: grid;
+  grid-template-columns: minmax(300px, 400px) 1fr;
+  gap: 24px;
+  padding: 24px;
+  min-height: 100vh;
+  box-sizing: border-box;
+}
+
+.column {
+  background: #fff;
+  border-radius: 16px;
+  padding: 20px;
+  box-shadow: 0 15px 40px rgba(0, 0, 0, 0.08);
+}
+
+.features-column {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.control-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.control-row label {
+  font-size: 0.9rem;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.control-row select,
+.control-row input {
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid #cbd5d9;
+  min-width: 120px;
+}
+
+.feature-table-wrapper {
+  max-height: 60vh;
+  overflow: auto;
+}
+
+.feature-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.feature-table th,
+.feature-table td {
+  text-align: left;
+  padding: 10px;
+  border-bottom: 1px solid #eef2f7;
+}
+
+.feature-table tbody tr {
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.feature-table tbody tr.active,
+.feature-table tbody tr:hover {
+  background: #f5f7ff;
+}
+
+.info-column {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.info-column header {
+  border-bottom: 1px solid #f1f5f9;
+  padding-bottom: 8px;
+}
+
+.metric-description {
+  font-size: 0.9rem;
+  color: #475569;
+}
+
+.error-message {
+  padding: 8px;
+  border-radius: 8px;
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.prompt-inline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  font-size: 0.9rem;
+  color: #1f2937;
+}
+
+.prompt-token {
+  padding: 0 2px;
+}
+
+.prompt-token.highlight {
+  background: #fef08a;
+  border-radius: 4px;
+}
+
+.prompt-cell {
+  max-width: 240px;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 960px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* Different behavior if the screen is too 
    narrow to show a sidenote on the side. */
 

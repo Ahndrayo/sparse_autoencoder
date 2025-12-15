@@ -79,7 +79,7 @@ elif len(tok_strs) > len(tok_flat):
     tok_strs = tok_strs[: len(tok_flat)]
 
 # Pick feature and top-k
-feat_id = 5132
+feat_id = 25906
 # feat_id = 3065
 top_k = 10
 
