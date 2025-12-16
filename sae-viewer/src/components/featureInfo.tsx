@@ -136,14 +136,36 @@ export default ({ feature }: {feature: Feature}) => {
           <table style={{fontSize: '12px'}} className="activations-table" >
             <thead>
             <tr>
-            <th>Doc ID</th><th>Token</th><th>Activation</th><th>Activations</th>
+            <th>Doc ID</th><th>Token</th><th>Activation</th><th>Prompt</th><th>Activations</th>
             {sequences.length && sequences[0].ablate_loss_diff && <th>Effects</th>}
             </tr>
             </thead>
             <tbody>
             {sequences.slice(0, n_show).map((sequence, i) => (
               <tr key={i}>
-              <td className="center">{sequence.doc_id}</td><td className="center">{sequence.idx}</td><td className="center">{sequence.act.toFixed(2)}</td>
+              <td className="center">{sequence.doc_id}</td><td className="center">{sequence.tokens?.[sequence.idx] || "—"}</td><td className="center">{sequence.act.toFixed(2)}</td>
+              <td className="prompt-cell p-2">
+                <div className="prompt-inline">
+                  {sequence.prompt_tokens?.length ? (
+                    (() => {
+                      const tokens = sequence.prompt_tokens || [];
+                      const highlightIdx = Math.min(tokens.length - 1, Math.max(sequence.idx ?? 0, 0));
+                      const before = tokens.slice(0, highlightIdx).join("");
+                      const highlight = tokens[highlightIdx] || "";
+                      const after = tokens.slice(highlightIdx + 1).join("");
+                      return (
+                        <span>
+                          {before}
+                          <span className="prompt-token highlight">{highlight}</span>
+                          {after}
+                        </span>
+                      );
+                    })()
+                  ) : (
+                    <span>{sequence.prompt || sequence.prompt_snippet || "—"}</span>
+                  )}
+                </div>
+              </td>
               <td className="p-2">
                   <TokenHeatmap info={sequence} renderNewlines={renderNewlines}/>
               </td>

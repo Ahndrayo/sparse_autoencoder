@@ -1,5 +1,6 @@
 # viz_analysis/viz.py
 import argparse
+import json
 from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
@@ -14,13 +15,42 @@ def main(args):
 
     # now construct your file paths
     lat_path = latest_run / "latent_activations.npy"
-    tok_path = latest_run / "tokens.npy"
-    prompt_path = latest_run / "prompt.txt"
-    lat = np.load(lat_path)   # shape [T, M]
-    if lat.ndim != 2:
-        raise SystemExit(f"Expected 2D array [T, M], got {lat.shape}")
+    prompts_jsonl = latest_run / "prompts.jsonl"
+    prompt_txt = latest_run / "prompt.txt"
+
+    lat = np.load(lat_path)
+    if lat.ndim == 3:
+        # New format: [num_prompts, seq_len, features]
+        if prompts_jsonl.exists():
+            seq_lens = []
+            with open(prompts_jsonl, "r", encoding="utf-8") as f:
+                for line in f:
+                    data = json.loads(line)
+                    seq_lens.append(int(data["seq_len"]))
+            total_tokens = sum(seq_lens)
+            M = lat.shape[-1]
+            lat_flat = np.zeros((total_tokens, M), dtype=lat.dtype)
+            idx = 0
+            for i, seq_len in enumerate(seq_lens):
+                lat_flat[idx : idx + seq_len] = lat[i, :seq_len]
+                idx += seq_len
+            lat = lat_flat
+            print(
+                f"Loaded chunked latents: {len(seq_lens)} prompts, {total_tokens} tokens, {M} features"
+            )
+        else:
+            # Fallback: just flatten and warn about potential pad tokens
+            lat = lat.reshape(-1, lat.shape[-1])
+            print(
+                "Warning: Flattened 3D latents without seq_len metadata; padding tokens may be included."
+            )
+    elif lat.ndim == 2:
+        pass
+    else:
+        raise SystemExit(f"Unsupported latent tensor shape: {lat.shape}")
+
     T, M = lat.shape
-    print(f"Loaded latents: T={T} tokens, M={M} features")
+    print(f"Latent matrix shape for viz: T={T} tokens, M={M} features")
 
     # --- Sparsity across features (fraction > 0 for each feature) ---
     frac_active = (lat > 0).mean(axis=0)  # [M]
