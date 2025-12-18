@@ -138,3 +138,6 @@ outdated_viewer/
 analysis_data/
 sparse_autoencoder/prompts/
 viz_analysis/Data/
+
+# Data from finetuning model
+finbert_twitter_ft/
