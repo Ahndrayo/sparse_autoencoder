@@ -146,6 +146,8 @@ class FeatureProbeData:
             "prompt_snippet": entry.get("prompt_snippet", ""),
             "prompt": entry.get("prompt", ""),
             "prompt_tokens": entry.get("prompt_tokens", []),
+            "predicted_label": entry.get("predicted_label"),
+            "true_label": entry.get("true_label"),
         }
 
     def get_feature_info(self, feature_id: int, top_k: int = 10) -> dict[str, Any]:

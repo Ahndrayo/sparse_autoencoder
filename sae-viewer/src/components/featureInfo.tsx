@@ -136,14 +136,25 @@ export default ({ feature }: {feature: Feature}) => {
           <table style={{fontSize: '12px'}} className="activations-table" >
             <thead>
             <tr>
-            <th>Doc ID</th><th>Token</th><th>Activation</th><th>Prompt</th><th>Activations</th>
+            <th>Doc ID</th><th>Token</th><th>Activation</th><th>Prediction</th><th>Prompt</th><th>Activations</th>
             {sequences.length && sequences[0].ablate_loss_diff && <th>Effects</th>}
             </tr>
             </thead>
             <tbody>
             {sequences.slice(0, n_show).map((sequence, i) => (
               <tr key={i}>
-              <td className="center">{sequence.doc_id}</td><td className="center">{sequence.tokens?.[sequence.idx] || "—"}</td><td className="center">{sequence.act.toFixed(2)}</td>
+              <td className="center">{sequence.doc_id}</td>
+              <td className="center">{sequence.tokens?.[sequence.idx] || "—"}</td>
+              <td className="center">{sequence.act.toFixed(2)}</td>
+              <td className="center" style={{
+                color: sequence.predicted_label === sequence.true_label ? '#22c55e' : '#ef4444',
+                fontWeight: 'bold'
+              }}>
+                {sequence.predicted_label || "—"}
+                {sequence.true_label && sequence.predicted_label !== sequence.true_label && 
+                  <span style={{fontSize: '10px', color: '#888'}}> (true: {sequence.true_label})</span>
+                }
+              </td>
               <td className="prompt-cell p-2">
                 <div className="prompt-inline">
                   {sequence.prompt_tokens?.length ? (
