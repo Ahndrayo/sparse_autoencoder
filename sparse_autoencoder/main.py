@@ -1,4 +1,5 @@
 import torch
+import torch.nn as nn
 import blobfile as bf
 import transformer_lens
 import sparse_autoencoder
@@ -11,6 +12,7 @@ from typing import Callable, Dict, List
 from utils.run_dirs import make_analysis_run_dir
 import pandas as pd
 import heapq
+from transformers import AutoTokenizer, AutoModel, AutoModelForSequenceClassification
 
 import kagglehub
 
@@ -111,6 +113,43 @@ class TokenStringCache:
         return self.cache[token_id]
 
 
+class FinBERTSparseAutoencoder(nn.Module):
+    """Wrapper for FinBERT-trained SAE compatible with OpenAI's interface"""
+    def __init__(self, checkpoint_path: str):
+        super().__init__()
+        checkpoint = torch.load(checkpoint_path, map_location='cpu')
+        
+        self.input_dim = checkpoint['config']['input_dim']
+        self.latent_dim = checkpoint['config']['latent_dim']
+        
+        self.encoder = nn.Linear(self.input_dim, self.latent_dim, bias=True)
+        self.decoder = nn.Linear(self.latent_dim, self.input_dim, bias=True)
+        
+        # Load weights
+        self.encoder.weight.data = checkpoint['encoder_weight']
+        self.encoder.bias.data = checkpoint['encoder_bias']
+        self.decoder.weight.data = checkpoint['decoder_weight']
+        self.decoder.bias.data = checkpoint['decoder_bias']
+        
+        self.n_inputs = self.input_dim
+        self.n_latents = self.latent_dim
+    
+    def encode(self, x):
+        """Encode to sparse latent representation"""
+        latent = self.encoder(x)
+        latent = torch.relu(latent)
+        return latent, {}  # Return tuple for compatibility
+    
+    def decode(self, latent, info=None):
+        """Decode from latent representation"""
+        return self.decoder(latent)
+    
+    def forward(self, x):
+        latent, info = self.encode(x)
+        reconstruction = self.decode(latent)
+        return reconstruction, info
+
+
 class FeatureTopTokenTracker:
     def __init__(
         self,
@@ -208,11 +247,7 @@ FEATURE_METRICS: List[FeatureMetricDefinition] = [
     ),
 ]
 
-# Extract neuron activations with transformer_lens
-model = transformer_lens.HookedTransformer.from_pretrained("gpt2", center_writing_weights=False)
-device = next(model.parameters()).device
-
-# Get prompt
+# Parse arguments first
 parser = argparse.ArgumentParser()
 parser.add_argument("--prompt-file", type=str, default=None,
                     help="Path to a text file containing the input prompt.")
@@ -226,7 +261,70 @@ parser.add_argument("--top-tokens-per-feature", type=int, default=20,
                     help="Number of top tokens to keep for each feature (default: 20).")
 parser.add_argument("--per-token-feature-scan", type=int, default=5,
                     help="How many features to sample per token when tracking top tokens.")
+parser.add_argument("--use-bert", action="store_true",
+                    help="Use FinBERT instead of GPT-2 (requires --bert-model and --sae-path).")
+parser.add_argument("--bert-model", type=str, default="./finbert_twitter_ft/best",
+                    help="Path to FinBERT model (default: ./finbert_twitter_ft/best).")
+parser.add_argument("--sae-path", type=str, default="./finbert_sae/layer_6_32k.pt",
+                    help="Path to trained SAE checkpoint (default: ./finbert_sae/layer_6_32k.pt).")
+parser.add_argument("--bert-layer", type=int, default=6,
+                    help="Which BERT layer to extract (0-11 for BERT-base, default: 6).")
 args = parser.parse_args()
+
+# Load model and SAE based on configuration
+if args.use_bert:
+    print(f"Using FinBERT model from: {args.bert_model}")
+    print(f"Loading SAE from: {args.sae_path}")
+    
+    # Load FinBERT
+    tokenizer = AutoTokenizer.from_pretrained(args.bert_model)
+    bert_model = AutoModelForSequenceClassification.from_pretrained(args.bert_model)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    bert_model.to(device)
+    bert_model.eval()
+    
+    # Load trained SAE
+    if not Path(args.sae_path).exists():
+        raise FileNotFoundError(
+            f"SAE checkpoint not found at {args.sae_path}. "
+            f"Please train an SAE first using the notebook cell."
+        )
+    autoencoder = FinBERTSparseAutoencoder(args.sae_path)
+    autoencoder.to(device)
+    autoencoder.eval()
+    
+    layer_index = args.bert_layer
+    location = f"bert_layer_{layer_index}"
+    use_bert_mode = True
+    
+    print(f"✓ Loaded FinBERT and SAE (layer {layer_index})")
+    print(f"  Input dim: {autoencoder.input_dim}, Latent dim: {autoencoder.latent_dim}")
+else:
+    print("Using GPT-2 model with OpenAI's pretrained SAE")
+    # Extract neuron activations with transformer_lens
+    model = transformer_lens.HookedTransformer.from_pretrained("gpt2", center_writing_weights=False)
+    device = next(model.parameters()).device
+    tokenizer = model.tokenizer
+    
+    layer_index = 6
+    location = "resid_post_mlp"
+    
+    transformer_lens_loc = {
+        "mlp_post_act": f"blocks.{layer_index}.mlp.hook_post",
+        "resid_delta_attn": f"blocks.{layer_index}.hook_attn_out",
+        "resid_post_attn": f"blocks.{layer_index}.hook_resid_mid",
+        "resid_delta_mlp": f"blocks.{layer_index}.hook_mlp_out",
+        "resid_post_mlp": f"blocks.{layer_index}.hook_resid_post",
+    }[location]
+    
+    with bf.BlobFile(sparse_autoencoder.paths.v5_32k(location, layer_index), mode="rb") as f:
+        state_dict = torch.load(f, map_location=device)
+    autoencoder = sparse_autoencoder.Autoencoder.from_state_dict(state_dict)
+    autoencoder.to(device)
+    autoencoder.eval()
+    
+    use_bert_mode = False
+    print(f"✓ Loaded GPT-2 and SAE (layer {layer_index})")
 
 if args.prompt_file:
     prompt_path = Path(args.prompt_file)
@@ -254,28 +352,10 @@ else:
         use_chunking = True
         prompt_entries = None  # Will be processed chunk by chunk
 
-layer_index = 6
-location = "resid_post_mlp"
-# location = "mlp-post-act"
-
-transformer_lens_loc = {
-    "mlp_post_act": f"blocks.{layer_index}.mlp.hook_post",
-    "resid_delta_attn": f"blocks.{layer_index}.hook_attn_out",
-    "resid_post_attn": f"blocks.{layer_index}.hook_resid_mid",
-    "resid_delta_mlp": f"blocks.{layer_index}.hook_mlp_out",
-    "resid_post_mlp": f"blocks.{layer_index}.hook_resid_post",
-}[location]
-
-with bf.BlobFile(sparse_autoencoder.paths.v5_32k(location, layer_index), mode="rb") as f:
-    state_dict = torch.load(f, map_location=device)
-autoencoder = sparse_autoencoder.Autoencoder.from_state_dict(state_dict)
-autoencoder.to(device)
-autoencoder.eval()
-
 MAX_SEQUENCE_LENGTH = 64
-pad_token_id = getattr(model.tokenizer, "pad_token_id", None)
+pad_token_id = getattr(tokenizer, "pad_token_id", None)
 if pad_token_id is None:
-    pad_token_id = getattr(model.tokenizer, "eos_token_id", 50256)
+    pad_token_id = getattr(tokenizer, "eos_token_id", 50256)
 
 # Where to write files (repo root /viewer/...)
 repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -286,7 +366,7 @@ top_token_tracker = FeatureTopTokenTracker(
     feature_dim,
     args.top_tokens_per_feature,
     args.per_token_feature_scan,
-    model.tokenizer,
+    tokenizer,
 )
 
 
@@ -294,33 +374,81 @@ def process_prompt_batch(prompt_entries_batch, next_prompt_index: int):
     """Process a batch of prompts, updating stats and returning processed metadata."""
     batch_processed_prompts: list[dict[str, str | int]] = []
     prompt_index = next_prompt_index
+    
+    # Setup for BERT activation capture
+    if use_bert_mode:
+        captured_activations = []
+        def capture_hook(module, input, output):
+            if isinstance(output, tuple):
+                hidden_states = output[0]
+            else:
+                hidden_states = output
+            captured_activations.append(hidden_states.detach())
+        
+        target_layer = bert_model.bert.encoder.layer[layer_index]
+        hook_handle = target_layer.register_forward_hook(capture_hook)
 
     for row_idx, text in prompt_entries_batch:
         prompt = text.strip()
         if not prompt:
             continue
 
-        tokens = model.to_tokens(prompt, truncate=False)
-        tokens = tokens[:, :MAX_SEQUENCE_LENGTH]
-        if tokens.shape[1] == 0:
-            continue
+        if use_bert_mode:
+            # BERT tokenization
+            inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=MAX_SEQUENCE_LENGTH)
+            token_ids = inputs["input_ids"][0].tolist()
+            
+            # Get string tokens (remove ## prefix from subwords)
+            raw_tokens = tokenizer.convert_ids_to_tokens(token_ids)
+            prompt_tokens_list = []
+            for tok in raw_tokens:
+                if tok.startswith("##"):
+                    prompt_tokens_list.append(tok[2:])
+                else:
+                    prompt_tokens_list.append(tok)
+            
+            if len(token_ids) == 0:
+                continue
+            
+            seq_len = len(token_ids)
+            inputs = inputs.to(device)
+            
+            with torch.inference_mode():
+                captured_activations.clear()
+                _ = bert_model(**inputs)
+                
+                if not captured_activations:
+                    continue
+                
+                # Get activations: [1, seq_len, 768]
+                input_tensor = captured_activations[0].squeeze(0)
+                latent_activations, info = autoencoder.encode(input_tensor)
+            
+            tokens_cpu = torch.tensor(token_ids)
+        else:
+            # GPT-2 tokenization
+            tokens = model.to_tokens(prompt, truncate=False)
+            tokens = tokens[:, :MAX_SEQUENCE_LENGTH]
+            if tokens.shape[1] == 0:
+                continue
 
-        seq_len = tokens.shape[1]
-        tokens = tokens.to(device)
+            seq_len = tokens.shape[1]
+            tokens = tokens.to(device)
 
-        with torch.inference_mode():
-            _, activation_cache = model.run_with_cache(tokens, remove_batch_dim=True)
-            input_tensor = activation_cache[transformer_lens_loc]
-            latent_activations, info = autoencoder.encode(input_tensor)
+            with torch.inference_mode():
+                _, activation_cache = model.run_with_cache(tokens, remove_batch_dim=True)
+                input_tensor = activation_cache[transformer_lens_loc]
+                latent_activations, info = autoencoder.encode(input_tensor)
+
+            tokens_cpu = tokens.detach().cpu()[0]
+            prompt_tokens_list = model.to_str_tokens(prompt)
 
         latents_cpu = latent_activations.detach().cpu()
-        tokens_cpu = tokens.detach().cpu()
-        prompt_tokens_list = model.to_str_tokens(prompt)
 
         feature_stats.update(latents_cpu)
         top_token_tracker.update(
             latents_cpu,
-            tokens_cpu[0],
+            tokens_cpu,
             prompt_index=prompt_index,
             row_id=row_idx,
             prompt_text=prompt,
@@ -335,6 +463,9 @@ def process_prompt_batch(prompt_entries_batch, next_prompt_index: int):
             }
         )
         prompt_index += 1
+    
+    if use_bert_mode:
+        hook_handle.remove()
 
     return batch_processed_prompts, prompt_index
 
@@ -407,6 +538,9 @@ else:
     total_processed = len(batch_prompts)
 
 metadata = {
+    "model_type": "bert" if use_bert_mode else "gpt2",
+    "model_path": args.bert_model if use_bert_mode else "gpt2",
+    "sae_path": args.sae_path if use_bert_mode else "openai_pretrained",
     "dataset_csv": str(dataset_csv),
     "text_column": KAGGLE_TEXT_COLUMN,
     "layer_index": layer_index,
@@ -415,6 +549,8 @@ metadata = {
     "max_sequence_length": MAX_SEQUENCE_LENGTH,
     "top_feature_count": args.top_feature_count,
     "top_tokens_per_feature": args.top_tokens_per_feature,
+    "hidden_dim": autoencoder.input_dim,
+    "latent_dim": autoencoder.latent_dim,
 }
 with open(run_dir / "metadata.json", "w", encoding="utf-8") as f:
     json.dump(metadata, f, indent=2)
