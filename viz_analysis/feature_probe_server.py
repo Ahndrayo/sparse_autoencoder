@@ -3,6 +3,10 @@ Local React-driven feature probe UI server.
 
 Usage:
     python viz_analysis/feature_probe_server.py --host 127.0.0.1 --port 8765
+    
+    # Load a specific run:
+    python viz_analysis/feature_probe_server.py --run-id 12
+    
 Then open http://127.0.0.1:8765/ to view the UI.
 """
 
@@ -16,7 +20,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from utils.run_picker import get_latest_run
+from utils.run_picker import get_latest_run, get_run_by_id
 
 STATIC_DIR = Path(__file__).resolve().parent
 HIST_BIN_WIDTH = 0.2
@@ -31,9 +35,12 @@ class FeatureProbeData:
     feature_metrics_map: dict[int, dict[str, float]]
 
     @classmethod
-    def load(cls, repo_root: Path) -> "FeatureProbeData":
+    def load(cls, repo_root: Path, run_id: int | None = None) -> "FeatureProbeData":
         analysis_dir = repo_root / "analysis_data"
-        run_path = get_latest_run(analysis_dir)
+        if run_id is not None:
+            run_path = get_run_by_id(analysis_dir, run_id)
+        else:
+            run_path = get_latest_run(analysis_dir)
         print(f"[feature_probe_server] Using run: {run_path}")
 
         summary_path = run_path / "feature_stats.json"
@@ -146,6 +153,8 @@ class FeatureProbeData:
             "prompt_snippet": entry.get("prompt_snippet", ""),
             "prompt": entry.get("prompt", ""),
             "prompt_tokens": entry.get("prompt_tokens", []),
+            "predicted_label": entry.get("predicted_label"),
+            "true_label": entry.get("true_label"),
         }
 
     def get_feature_info(self, feature_id: int, top_k: int = 10) -> dict[str, Any]:
@@ -263,10 +272,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Serve the feature probe React UI.")
     parser.add_argument("--host", default="127.0.0.1", help="Hostname to bind (default 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8765, help="Port to bind (default 8765)")
+    parser.add_argument("--run-id", type=int, default=None, help="Specific run ID to load (e.g., 12 for run-012). If not provided, loads the latest run.")
     args = parser.parse_args()
 
     repo_root = Path(__file__).resolve().parent.parent
-    data_store = FeatureProbeData.load(repo_root)
+    data_store = FeatureProbeData.load(repo_root, run_id=args.run_id)
 
     handler = lambda *handler_args, **handler_kwargs: FeatureProbeRequestHandler(  # noqa: E731
         *handler_args, data_store=data_store, **handler_kwargs

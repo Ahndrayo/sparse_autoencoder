@@ -138,3 +138,7 @@ outdated_viewer/
 analysis_data/
 sparse_autoencoder/prompts/
 viz_analysis/Data/
+
+# Data from finetuning model and SAE
+finbert_twitter_ft/
+finbert_sae/

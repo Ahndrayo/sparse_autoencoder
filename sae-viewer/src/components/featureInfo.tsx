@@ -136,33 +136,62 @@ export default ({ feature }: {feature: Feature}) => {
           <table style={{fontSize: '12px'}} className="activations-table" >
             <thead>
             <tr>
-            <th>Doc ID</th><th>Token</th><th>Activation</th><th>Prompt</th><th>Activations</th>
+            <th>Doc ID</th><th>Token</th><th>Activation</th><th>Prediction</th><th>Prompt</th><th>Activations</th>
             {sequences.length && sequences[0].ablate_loss_diff && <th>Effects</th>}
             </tr>
             </thead>
             <tbody>
             {sequences.slice(0, n_show).map((sequence, i) => (
               <tr key={i}>
-              <td className="center">{sequence.doc_id}</td><td className="center">{sequence.tokens?.[sequence.idx] || "—"}</td><td className="center">{sequence.act.toFixed(2)}</td>
+              <td className="center">{sequence.doc_id}</td>
+              <td className="center">{sequence.tokens?.[sequence.idx] || "—"}</td>
+              <td className="center">{sequence.act.toFixed(2)}</td>
+              <td className="center" style={{
+                color: sequence.predicted_label === sequence.true_label ? '#22c55e' : '#ef4444',
+                fontWeight: 'bold'
+              }}>
+                {sequence.predicted_label || "—"}
+                {sequence.true_label && sequence.predicted_label !== sequence.true_label && 
+                  <span style={{fontSize: '10px', color: '#888'}}> (true: {sequence.true_label})</span>
+                }
+              </td>
               <td className="prompt-cell p-2">
                 <div className="prompt-inline">
-                  {sequence.prompt_tokens?.length ? (
+                  {sequence.prompt ? (
+                    // Use the original prompt text if available
+                    <span>{sequence.prompt}</span>
+                  ) : sequence.prompt_tokens?.length ? (
                     (() => {
-                      const tokens = sequence.prompt_tokens || [];
-                      const highlightIdx = Math.min(tokens.length - 1, Math.max(sequence.idx ?? 0, 0));
-                      const before = tokens.slice(0, highlightIdx).join("");
+                      const allTokens = sequence.prompt_tokens || [];
+                      // Filter out special tokens
+                      const specialTokens = ['[CLS]', '[SEP]', '[PAD]', '[UNK]'];
+                      const tokens = allTokens.filter(t => !specialTokens.includes(t));
+                      
+                      // Adjust highlight index to account for filtered tokens
+                      let rawHighlightIdx = Math.min(allTokens.length - 1, Math.max(sequence.idx ?? 0, 0));
+                      let highlightIdx = rawHighlightIdx;
+                      // Count how many special tokens were before the highlight
+                      let removed = 0;
+                      for (let i = 0; i < rawHighlightIdx && i < allTokens.length; i++) {
+                        if (specialTokens.includes(allTokens[i])) removed++;
+                      }
+                      highlightIdx = Math.max(0, rawHighlightIdx - removed);
+                      
+                      const before = tokens.slice(0, highlightIdx).join(" ");
                       const highlight = tokens[highlightIdx] || "";
-                      const after = tokens.slice(highlightIdx + 1).join("");
+                      const after = tokens.slice(highlightIdx + 1).join(" ");
                       return (
                         <span>
                           {before}
+                          {before && " "}
                           <span className="prompt-token highlight">{highlight}</span>
+                          {after && " "}
                           {after}
                         </span>
                       );
                     })()
                   ) : (
-                    <span>{sequence.prompt || sequence.prompt_snippet || "—"}</span>
+                    <span>{sequence.prompt_snippet || "—"}</span>
                   )}
                 </div>
               </td>
