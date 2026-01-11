@@ -101,6 +101,14 @@ class FeatureProbeData:
     def num_tokens(self) -> int:
         return int(self.feature_stats.get("total_tokens", 0))
 
+    @property
+    def accuracy(self) -> float:
+        return float(self.feature_stats.get("accuracy", 0.0))
+
+    @property
+    def num_samples(self) -> int:
+        return int(self.feature_stats.get("num_samples", 0))
+
     def get_top_features(
         self, limit: int = 50, metric_name: str = "mean_activation"
     ) -> list[dict[str, Any]]:
@@ -229,6 +237,8 @@ class FeatureProbeRequestHandler(SimpleHTTPRequestHandler):
                         "metric_descriptions": self.data_store.metric_descriptions,
                         "num_features": self.data_store.num_features,
                         "num_tokens": self.data_store.num_tokens,
+                        "accuracy": self.data_store.accuracy,
+                        "num_samples": self.data_store.num_samples,
                     }
                 )
             except Exception as exc:  # noqa: BLE001

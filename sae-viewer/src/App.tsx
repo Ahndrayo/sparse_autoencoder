@@ -66,6 +66,20 @@ function App() {
             Viewing the latest run&apos;s top {limit} features sorted by{" "}
             <strong>{payload?.metric || metric}</strong>.
           </p>
+          {payload?.accuracy !== undefined && (
+            <p className="accuracy-display">
+              <strong>Model Accuracy:</strong>{" "}
+              <span className="accuracy-value">
+                {(payload.accuracy * 100).toFixed(2)}%
+              </span>
+              {payload.num_samples && (
+                <span className="sample-count">
+                  {" "}
+                  ({payload.num_samples} samples)
+                </span>
+              )}
+            </p>
+          )}
         </header>
         <div className="control-row">
           <label>

@@ -11,6 +11,10 @@ export async function fetchFeatures(
   metric: string;
   metrics_available: string[];
   metric_descriptions: Record<string, string>;
+  accuracy?: number;
+  num_samples?: number;
+  num_features?: number;
+  num_tokens?: number;
 }> {
   const url = new URL(`${API_BASE}/api/features`);
   url.searchParams.set("limit", String(limit));
