@@ -43,6 +43,20 @@ export type SequenceInfo = {
   top_upvotes_probs?: number[][],
 }
 
+export type HeadlineInfo = {
+  row_id: number;
+  prompt: string;
+  predicted_label: string;
+  true_label: string;
+  correct: boolean;
+  num_tokens: number;
+  features: Array<{
+    feature_id: number;
+    total_activation: number;
+    mean_activation: number;
+  }>;
+};
+
 export function zip_sequence(sequence: SequenceInfo) {
   return sequence.tokens.map((token, idx) => ({
     token,

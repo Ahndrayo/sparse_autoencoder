@@ -33,6 +33,7 @@ class FeatureProbeData:
     feature_tokens: dict[str, list[dict[str, Any]]]
     mean_act_squared: list[float]
     feature_metrics_map: dict[int, dict[str, float]]
+    headline_features: list[dict[str, Any]]
 
     @classmethod
     def load(cls, repo_root: Path, run_id: int | None = None) -> "FeatureProbeData":
@@ -74,12 +75,21 @@ class FeatureProbeData:
             ", ".join(metric_names) if metric_names else "(none)",
         )
 
+        headlines_path = run_path / "headline_features.json"
+        headline_features: list[dict[str, Any]] = []
+        if headlines_path.exists():
+            with open(headlines_path, "r", encoding="utf-8") as f:
+                headline_features = json.load(f)
+        else:
+            print("[feature_probe_server] Warning: headline_features.json not found; headline view will be empty.")
+
         return cls(
             run_path=run_path,
             feature_stats=feature_stats,
             feature_tokens=feature_tokens,
             mean_act_squared=feature_stats.get("mean_act_squared", []),
             feature_metrics_map=feature_metrics_map,
+            headline_features=headline_features,
         )
 
     @property
@@ -108,6 +118,10 @@ class FeatureProbeData:
     @property
     def num_samples(self) -> int:
         return int(self.feature_stats.get("num_samples", 0))
+
+    def get_headlines(self, limit: int = 100) -> list[dict[str, Any]]:
+        limit = max(1, min(limit, len(self.headline_features)))
+        return self.headline_features[:limit]
 
     def get_top_features(
         self, limit: int = 50, metric_name: str = "mean_activation"
@@ -241,6 +255,16 @@ class FeatureProbeRequestHandler(SimpleHTTPRequestHandler):
                         "num_samples": self.data_store.num_samples,
                     }
                 )
+            except Exception as exc:  # noqa: BLE001
+                self._send_json({"error": str(exc)}, status=400)
+            return
+
+        if parsed.path == "/api/headlines":
+            params = parse_qs(parsed.query)
+            limit = int(params.get("limit", ["100"])[0])
+            try:
+                headlines = self.data_store.get_headlines(limit)
+                self._send_json({"headlines": headlines})
             except Exception as exc:  # noqa: BLE001
                 self._send_json({"error": str(exc)}, status=400)
             return
