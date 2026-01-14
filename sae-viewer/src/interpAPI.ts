@@ -47,3 +47,21 @@ export async function get_feature_info(
   }
   return res.json();
 }
+
+export async function fetchHeadlines(
+  limit: number = 100
+): Promise<{
+  headlines: any[];
+}> {
+  const url = new URL(`${API_BASE}/api/headlines`);
+  url.searchParams.set("limit", String(limit));
+  const res = await fetch(url.toString(), {
+    headers: {
+      "Accept": "application/json",
+    },
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to load headlines: ${res.statusText}`);
+  }
+  return res.json();
+}
