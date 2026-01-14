@@ -52,8 +52,10 @@ export type HeadlineInfo = {
   num_tokens: number;
   features: Array<{
     feature_id: number;
-    total_activation: number;
-    mean_activation: number;
+    max_activation: number;
+    token_position: number;
+    token_id: number;
+    token_str: string;
   }>;
 };
 

@@ -75,7 +75,7 @@ export default function HeadlinesView({ onFeatureClick }: Props) {
               {headlines.map((h) => {
                 const topFeatures = h.features || [];
                 const showAll = expanded[h.row_id] || false;
-                const displayFeatures = showAll ? topFeatures : topFeatures.slice(0, 3);
+                const displayFeatures = showAll ? topFeatures.slice(0, 10) : topFeatures.slice(0, 3);
                 return (
                   <tr key={h.row_id}>
                     <td className="center">{h.row_id}</td>
@@ -99,9 +99,9 @@ export default function HeadlinesView({ onFeatureClick }: Props) {
                             key={f.feature_id}
                             className="feature-chip"
                             onClick={() => onFeatureClick?.(f.feature_id)}
-                            title={`Total: ${f.total_activation.toFixed(4)} | Mean: ${f.mean_activation.toFixed(4)}`}
+                            title={`Activation: ${f.max_activation?.toFixed(3) ?? "—"}`}
                           >
-                            #{f.feature_id}
+                            {f.feature_id}: {f.token_str}
                           </button>
                         ))}
                         {topFeatures.length > 3 && (
@@ -109,7 +109,7 @@ export default function HeadlinesView({ onFeatureClick }: Props) {
                             className="feature-chip ghost"
                             onClick={() => toggleExpand(h.row_id)}
                           >
-                            {showAll ? "Hide" : `+${topFeatures.length - 3} more`}
+                            {showAll ? "Hide" : `+${Math.min(topFeatures.length, 10) - 3} more`}
                           </button>
                         )}
                       </div>
