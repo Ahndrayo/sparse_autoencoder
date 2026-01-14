@@ -1,191 +1,210 @@
-# sparse_autoencoder_openai
+# FinBERT Sparse Autoencoder Explorer
 
-This repo extracts sparse autoencoder activations from GPT-2, saves lightweight summaries (top features plus their highest-activation tokens), and exposes a local React viewer (`sae-viewer/`) that visualizes those summaries instead of relying on the hosted OpenAI viewer.
+This repository trains sparse autoencoders (SAEs) on FinBERT activations for sentiment analysis and provides an interactive viewer to explore feature activations at both the feature and headline level.
+
+## Overview
+
+- **Model**: Fine-tuned FinBERT for financial sentiment classification (Bearish/Bullish/Neutral)
+- **SAE Training**: Multiple SAE sizes (4k, 8k, 16k, 32k features) trained on FinBERT layer activations
+- **Dual Viewer**: Browse by headlines (see which features fire per prediction) or by features (see which tokens activate each feature)
+- **Dataset**: Twitter Financial News Sentiment dataset
+
+## Installation
+
+### 1. Install Python Dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+**Note**: PyTorch with CUDA support must be installed separately for GPU acceleration:
+
+```bash
+# For CUDA 11.8 (adjust version as needed)
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+
+# Or for CUDA 12.1 (recommended)
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+```
+
+Check available CUDA versions at: https://pytorch.org/get-started/locally/
+
+### 2. Install React Viewer Dependencies
+
+```bash
+cd sae-viewer
+npm install
+```
 
 ## Workflow
 
-### 1. Install dependencies
+### 1. Train Sparse Autoencoders
 
-- Install the Python requirements listed in `pyproject.toml`:
-  ```bash
-  python -m pip install -r requirements.txt
-  ```
-- Install the React viewer dependencies (Parcel + Tailwind) in `sae-viewer/`:
-  ```bash
-  cd sae-viewer
-  npm install
-  ```
+Open `Sentiment_Classification.ipynb` and run the SAE training cell. This will:
+- Fine-tune FinBERT on the financial sentiment dataset
+- Extract layer-8 activations from all training samples
+- Train SAEs with 4 different sizes: **4k, 8k, 16k, and 32k** features
+- Save each model to `./finbert_sae/layer_8_Xk.pt`
 
-### 2. Generate top-feature summaries
-
-```bash
-python sparse_autoencoder/main.py --max-rows 100 --chunk-size 50 --top-feature-count 100 --top-tokens-per-feature 20
+Training parameters:
+```python
+LAYER_TO_EXTRACT = 8         # Which BERT layer to extract
+LATENT_DIMS = [4096, 8192, 16384, 32768]  # SAE feature counts
+L1_COEFFICIENT = 1e-3         # Sparsity penalty
+NUM_EPOCHS = 3                # Training epochs
 ```
 
-Flags:
+**Sparsity results** (layer 8, 32k SAE):
+- ~3.8% of features active per token (~1,250 features)
+- But only top 10-20 features have strong activations
 
-- `--max-rows`: how many Kaggle rows to process.  
-- `--chunk-size`: how many rows to load per chunk (keeps memory usage low).  
-- `--top-feature-count`: how many features per metric to persist in `feature_stats.json`.  
-- `--top-tokens-per-feature`: how many token activations per feature to store in `feature_tokens.json`.
+### 2. Run Inference and Generate Feature Data
 
-Outputs are placed under `analysis_data/<timestamp>_run-XXX/` (metadata, prompts, feature stats/tokens).
+In the same notebook, run the **inference cell** to:
+- Load a trained SAE (choose size: `SAE_SIZE = "32k"`)
+- Process validation samples through FinBERT + SAE
+- Generate three data files:
+  - `feature_stats.json` - Statistics for all features
+  - `feature_tokens.json` - Top 20 token examples for top 100 features per metric
+  - `headline_features.json` - Top 10 features per headline with activating tokens
+- Save to `./analysis_data/<timestamp>_run-XXX/`
 
-### 3. Serve the summaries locally
+Key parameters:
+```python
+SAE_SIZE = "32k"              # Which SAE to use: "4k", "8k", "16k", or "32k"
+MAX_SAMPLES = 100             # Number of validation samples to process
+TOP_FEATURES = 100            # Top features to save detailed token data for
+TOP_TOKENS_PER_FEATURE = 20   # Token examples per feature
+```
 
+### 3. Start the Backend Server
+
+On a terminal, run the following command:
 ```bash
 python viz_analysis/feature_probe_server.py --host 127.0.0.1 --port 8765
 ```
 
-The server loads the newest run and exposes:
+The server automatically loads the latest run from `analysis_data/` and exposes:
+- `GET /api/headlines` - List all headlines with top features
+- `GET /api/features` - Top features by metric
+- `GET /api/feature_info?id=<id>` - Detailed token activations for a feature
 
-- `GET /api/features`: the saved features per metric (means/maxes/fraction > 0).  
-- `GET /api/feature_info?id=<feature_id>`: a `FeatureInfo` payload (density, histogram, top/random sequences) that the React viewer renders.
+Optional: Load a specific run:
+```bash
+python viz_analysis/feature_probe_server.py --run-id 34  # Loads run-034
+```
 
-It prints the run directory it loaded so you can confirm which dataset you are visualizing.
+### 4. Launch the Viewer
 
-### 4. Launch the SAE viewer
-
+On a separate terminal from the server, run the following command:
 ```bash
 cd sae-viewer
 npm start
 ```
 
-Parcel serves the UI (default `http://localhost:1234`). The React app fetches from the Python server, lets you switch metrics, and shows each feature’s histogram + token snippets (via the re-used `FeatureInfo` component).
+Opens at `http://localhost:1234` with two tabs:
 
-### 5. Notes
+#### **Headlines Tab** (Default)
+- View all processed headlines
+- See prediction vs. true label (green = correct, red = wrong)
+- Top 3 features shown as chips: `"Feature 1234: surge"` 
+- Hover over chips to see activation values
+- Click "Show All" to see all 10 features
+- Click any feature chip to jump to Features tab
 
-- Only saved features are available in the viewer. Re-run `main.py` with larger limits to include more neurons.  
-- Add your own ranking metrics in `FEATURE_METRICS` inside `sparse_autoencoder/main.py`; they will appear automatically in the viewer’s metric dropdown.  
-- Legacy helpers in `viz_analysis/` (`feature_probe.py`, `viz.py`, etc.) remain if you want to switch back to storing the full `.npy` activations.
-- Monitor storage in `analysis_data/`—each run adds a timestamped folder.
+#### **Features Tab**
+- Browse top 100 features by metric (mean activation, max activation, fraction active)
+- Search by feature ID using the search box
+- View top 20 token activations for each feature with context
+- See predictions and labels for each example
 
-## Additional references
+## Understanding Feature Tracking
 
-- The original SAE viewer is documented in `sae-viewer/README.md` and hosted publicly [here](https://openaipublic.blob.core.windows.net/sparse-autoencoder/sae-viewer/index.html).  
-- Explore `sparse_autoencoder/model.py`, `train.py`, and `paths.py` for details on the autoencoder architecture and available checkpoints.
-# sparse_autoencoder_openai
+### Three Levels of Data
 
-This repo extracts sparse autoencoder activations from the GPT‑2 transformer, persists the results, and ships a lightweight React viewer to explore the top features and tokens.  
-Use it to run on a subset of the pre-downloaded Kaggle dataset and then inspect the saved features locally.
+1. **Statistics for ALL features** (all 32k)
+   - Mean activation, max activation, fraction active
+   - Computed but not saved per-token
 
-## Workflow
+2. **Top 100 features per metric** (300 unique features)
+   - Saves 20 top-activating token examples each
+   - Viewable in Features tab
 
-### 1. Install dependencies
+3. **Top 10 features per headline** (per sample)
+   - Which features fired strongest for each prediction
+   - Shows the max-activating token per feature
+   - Viewable in Headlines tab
 
-- Python dependencies are defined in `pyproject.toml`. Use poetry/pip to install them, e.g.
-  ```bash
-  python -m pip install -r requirements.txt
-  ```
-  (If `requirements.txt` is missing, build it from `pyproject.toml` or use `poetry install`.)
-- The React viewer lives under `viz_analysis/`; it uses only vanilla JS/React shipped via CDN, so no extra build step is required.
+### Sparsity Breakdown
 
-### 2. Run `main.py` on a small slice
+With the 32k SAE at 3.82% sparsity:
+- ~1,250 features have non-zero activation per token
+- Most are weak (< 0.1 activation)
+- Only ~10-50 are meaningfully strong (> 1.0)
+- Top 5-10 dominate (> 5.0)
 
-`main.py` downloads the Kaggle dataset via `kagglehub`, tokenizes prompts, runs them through the sparse autoencoder, and writes several summary files (`metadata.json`, `prompts.jsonl`, `feature_stats.json`, `feature_tokens.json`). To limit memory/disk use when you are experimenting:
+## Files Structure
 
-```bash
-python sparse_autoencoder/main.py --max-rows 100 --chunk-size 50 --top-feature-count 100 --top-tokens-per-feature 10
+```
+.
+├── Sentiment_Classification.ipynb   # Main notebook: training + inference
+├── finbert_sae/                     # Saved SAE models
+│   ├── layer_8_4k.pt
+│   ├── layer_8_8k.pt
+│   ├── layer_8_16k.pt
+│   └── layer_8_32k.pt
+├── analysis_data/                   # Inference results
+│   └── <timestamp>_run-XXX/
+│       ├── feature_stats.json       # All features' statistics
+│       ├── feature_tokens.json      # Top 100 features' token examples
+│       ├── headline_features.json   # Per-headline top features
+│       ├── prompts.jsonl            # Sample metadata
+│       └── metadata.json            # Run configuration
+├── viz_analysis/
+│   └── feature_probe_server.py      # Backend API server
+└── sae-viewer/                      # React viewer
+    └── src/
+        ├── App.tsx                  # Tab router
+        ├── components/
+        │   ├── HeadlinesView.tsx    # Headlines tab
+        │   └── FeaturesView.tsx     # Features tab
+        └── interpAPI.ts             # API client
 ```
 
-Key flags:
+## Switching Between SAE Sizes
 
-- `--max-rows`: cap the number of dataset rows processed.  
-- `--chunk-size`: how many rows are loaded per chunk (keeps RAM small).  
-- `--top-feature-count`: only the top `N` features per metric are saved to `feature_stats.json`.  
-- `--top-tokens-per-feature`: how many token activations are cached per feature in `feature_tokens.json`.
+To compare different SAE sizes, just change `SAE_SIZE` in the inference cell:
 
-The script writes run outputs to `analysis_data/<timestamp>_run-XXX/`. Each run writes metadata plus the trimmed summaries above; it no longer keeps the huge `latent_activations.npy`.
-
-### 3. Explore with the React viewer
-
-The viewer reads the latest run folder and exposes:
-
-- `/api/features`: lists the saved top features per metric.  
-- `/api/feature?id=...`: returns the saved tokens/snippets for that feature.  
-- A static React UI (`feature_probe_frontend.html` + `feature_probe_app.js`) that lets you choose the metric, browse features, and drill into tokens.
-
-Run it with:
-
-```bash
-python viz_analysis/feature_probe_server.py --host 127.0.0.1 --port 8765
+```python
+SAE_SIZE = "4k"   # 4096 features, ~30% sparsity
+SAE_SIZE = "8k"   # 8192 features, ~15% sparsity
+SAE_SIZE = "16k"  # 16384 features, ~7.7% sparsity
+SAE_SIZE = "32k"  # 32768 features, ~3.8% sparsity (most granular)
 ```
 
-The server prints the run folder it loads, so you can confirm which summary you are viewing. Open `http://127.0.0.1:8765/` in your browser, pick a metric, click feature rows, and the token list will update.
+Then rerun inference, restart the server, and refresh the viewer.
 
-### 4. Legacy scripts / troubleshooting
+## Customization
 
-- `viz_analysis/feature_probe.py` and `viz_analysis/viz.py` still exist for earlier workflows that relied on the raw numpy arrays; they can be used if you ever rerun `main.py` in “full save” mode again.  
-- If you need to regenerate the feature summaries with different metrics, add them to `FEATURE_METRICS` in `sparse_autoencoder/main.py`.
-- Monitor disk usage in `analysis_data/`; each run creates a timestamped directory with the saved JSON files.
+### Add More Metrics
+Edit the inference cell to add custom feature metrics (e.g., entropy, kurtosis) - they'll appear automatically in the viewer's metric dropdown.
 
-## Summary
-1. Run `main.py` with small arguments (e.g., `--max-rows 100`) to generate summaries without huge `.npy` files.  
-2. Start the viewer via `feature_probe_server.py` and browse the React UI at `http://localhost:8765/`.  
-3. Adjust metrics/limits as you need; rerun `main.py` if you want a fresh summary.  
+### Increase Feature Coverage
+Change `TOP_FEATURES = 100` to track more features with token examples (increases storage).
 
-Let me know if you want a docker script or automatic dataset download/update workflow.
-# Sparse autoencoders
+### Process More Samples
+Change `MAX_SAMPLES = 100` to analyze more validation examples (increases compute time).
 
-This repository hosts:
-- sparse autoencoders trained on the GPT2-small model's activations.
-- a visualizer for the autoencoders' features
+## Notes
 
-### Install
+- Only the top 100 features per metric have detailed token examples
+- All 32k features have summary statistics and can be searched
+- Each run creates a new timestamped folder in `analysis_data/`
+- The viewer always loads the latest run unless `--run-id` is specified
+- GPU with CUDA strongly recommended for SAE training and FinBERT finetuning
 
-```sh
-pip install git+https://github.com/openai/sparse_autoencoder.git
-```
+## References
 
-### Code structure
-
-See [sae-viewer](./sae-viewer/README.md) to see the visualizer code, hosted publicly [here](https://openaipublic.blob.core.windows.net/sparse-autoencoder/sae-viewer/index.html).
-
-See [model.py](./sparse_autoencoder/model.py) for details on the autoencoder model architecture.
-See [train.py](./sparse_autoencoder/train.py) for autoencoder training code.
-See [paths.py](./sparse_autoencoder/paths.py) for more details on the available autoencoders.
-
-### Example usage
-
-```py
-import torch
-import blobfile as bf
-import transformer_lens
-import sparse_autoencoder
-
-# Extract neuron activations with transformer_lens
-model = transformer_lens.HookedTransformer.from_pretrained("gpt2", center_writing_weights=False)
-device = next(model.parameters()).device
-
-prompt = "This is an example of a prompt that"
-tokens = model.to_tokens(prompt)  # (1, n_tokens)
-with torch.no_grad():
-    logits, activation_cache = model.run_with_cache(tokens, remove_batch_dim=True)
-
-layer_index = 6
-location = "resid_post_mlp"
-
-transformer_lens_loc = {
-    "mlp_post_act": f"blocks.{layer_index}.mlp.hook_post",
-    "resid_delta_attn": f"blocks.{layer_index}.hook_attn_out",
-    "resid_post_attn": f"blocks.{layer_index}.hook_resid_mid",
-    "resid_delta_mlp": f"blocks.{layer_index}.hook_mlp_out",
-    "resid_post_mlp": f"blocks.{layer_index}.hook_resid_post",
-}[location]
-
-with bf.BlobFile(sparse_autoencoder.paths.v5_32k(location, layer_index), mode="rb") as f:
-    state_dict = torch.load(f)
-    autoencoder = sparse_autoencoder.Autoencoder.from_state_dict(state_dict)
-    autoencoder.to(device)
-
-input_tensor = activation_cache[transformer_lens_loc]
-
-input_tensor_ln = input_tensor
-
-with torch.no_grad():
-    latent_activations, info = autoencoder.encode(input_tensor_ln)
-    reconstructed_activations = autoencoder.decode(latent_activations, info)
-
-normalized_mse = (reconstructed_activations - input_tensor).pow(2).sum(dim=1) / (input_tensor).pow(2).sum(dim=1)
-print(location, normalized_mse)
-```
+- Original SAE viewer from OpenAI: [sae-viewer README](./sae-viewer/README.md)
+- FinBERT: [ProsusAI/finbert](https://huggingface.co/ProsusAI/finbert)
+- Dataset: [Twitter Financial News Sentiment](https://huggingface.co/datasets/zeroshot/twitter-financial-news-sentiment)
