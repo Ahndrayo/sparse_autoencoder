@@ -47,7 +47,7 @@ class FeatureProbeData:
         summary_path = run_path / "feature_stats.json"
         if not summary_path.exists():
             raise FileNotFoundError(
-                f"Expected feature_stats.json in {run_path}, please rerun main.py."
+                f"Expected feature_stats.json in {run_path}, please rerun the inference cell in Sentiment_Classification.ipynb."
             )
         with open(summary_path, "r", encoding="utf-8") as f:
             feature_stats = json.load(f)
