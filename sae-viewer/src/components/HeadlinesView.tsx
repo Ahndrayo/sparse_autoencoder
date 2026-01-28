@@ -38,6 +38,13 @@ export default function HeadlinesView({ onFeatureClick }: Props) {
     setExpanded((prev) => ({ ...prev, [rowId]: !prev[rowId] }));
   };
 
+  const getImpactColor = (fraction?: number) => {
+    if (fraction === undefined) return '#6b7280';
+    if (fraction < 0.2) return '#22c55e';  // Low impact - green
+    if (fraction < 0.5) return '#eab308';  // Medium - yellow
+    return '#ef4444';  // High impact - red
+  };
+
   return (
     <div className="headlines-view">
       <header className="headlines-header">
@@ -66,6 +73,7 @@ export default function HeadlinesView({ onFeatureClick }: Props) {
               <tr>
                 <th>ID</th>
                 <th>Prediction</th>
+                <th>Ablation Impact</th>
                 <th>True Label</th>
                 <th>Headline</th>
                 <th>Top Features</th>
@@ -87,6 +95,23 @@ export default function HeadlinesView({ onFeatureClick }: Props) {
                       }}
                     >
                       {h.predicted_label}
+                    </td>
+                    <td className="center ablation-metrics">
+                      {h.num_ablated_features !== undefined ? (
+                        <div>
+                          <div className="ablation-count">
+                            {h.num_ablated_features}/{h.total_baseline_features} ablated
+                          </div>
+                          <div 
+                            className="ablation-fraction" 
+                            style={{color: getImpactColor(h.ablation_fraction)}}
+                          >
+                            {(h.ablation_fraction! * 100).toFixed(1)}% removed
+                          </div>
+                        </div>
+                      ) : (
+                        <span className="no-ablation">—</span>
+                      )}
                     </td>
                     <td className="center">{h.true_label}</td>
                     <td style={{ maxWidth: "360px" }}>

@@ -57,6 +57,10 @@ export type HeadlineInfo = {
     token_id: number;
     token_str: string;
   }>;
+  // Ablation metrics (optional, only present for ablation runs)
+  num_ablated_features?: number;
+  total_baseline_features?: number;
+  ablation_fraction?: number;
 };
 
 export function zip_sequence(sequence: SequenceInfo) {

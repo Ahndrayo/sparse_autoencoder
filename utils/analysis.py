@@ -122,6 +122,79 @@ class HeadlineFeatureAggregator:
             "features": features
         })
     
+    def add_headline_with_ablation_metrics(
+        self, 
+        prompt_idx: int, 
+        prompt_text: str,
+        token_activations: np.ndarray,
+        token_ids: List[int],
+        token_strings: List[str],
+        predicted_label: str, 
+        true_label: str,
+        baseline_features: dict,
+        features_to_ablate: List[int]
+    ):
+        """
+        Aggregate features with ablation comparison metrics.
+        
+        Args:
+            baseline_features: Dict with 'top_features' (list of {feature_id, activation}) 
+                              and 'total_activation' (sum of top-10 activations)
+            features_to_ablate: List of feature IDs that were ablated
+        """
+        if token_activations.size == 0:
+            return
+        
+        # Compute ablated features (existing logic)
+        max_token_idx_per_feature = token_activations.argmax(axis=0)
+        max_activation_per_feature = token_activations.max(axis=0)
+        top_feature_ids = np.argsort(max_activation_per_feature)[-self.top_k:][::-1]
+        features = [
+            {
+                "feature_id": int(fid),
+                "max_activation": float(max_activation_per_feature[fid]),
+                "token_position": int(max_token_idx_per_feature[fid]),
+                "token_id": int(token_ids[max_token_idx_per_feature[fid]]),
+                "token_str": token_strings[max_token_idx_per_feature[fid]],
+            }
+            for fid in top_feature_ids if max_activation_per_feature[fid] > 0
+        ]
+        
+        # Compute ablation metrics
+        baseline_top_features = baseline_features.get('top_features', [])
+        baseline_feature_ids = {feat['feature_id'] for feat in baseline_top_features}
+        ablated_set = set(features_to_ablate)
+        
+        # Count how many baseline top features were ablated
+        num_ablated_features = len(baseline_feature_ids & ablated_set)
+        total_baseline_features = len(baseline_top_features)
+        
+        # Calculate activation fraction ablated
+        ablated_activation_sum = sum(
+            feat['activation'] 
+            for feat in baseline_top_features 
+            if feat['feature_id'] in ablated_set
+        )
+        baseline_total_activation = baseline_features.get('total_activation', 0.0)
+        
+        if baseline_total_activation > 0:
+            ablation_fraction = ablated_activation_sum / baseline_total_activation
+        else:
+            ablation_fraction = 0.0
+        
+        self.headlines.append({
+            "row_id": int(prompt_idx),
+            "prompt": prompt_text,
+            "predicted_label": predicted_label,
+            "true_label": true_label,
+            "correct": predicted_label == true_label,
+            "num_tokens": int(token_activations.shape[0]),
+            "features": features,
+            "num_ablated_features": int(num_ablated_features),
+            "total_baseline_features": int(total_baseline_features),
+            "ablation_fraction": float(ablation_fraction)
+        })
+    
     def export(self):
         """Export all headline data."""
         return self.headlines
