@@ -95,7 +95,8 @@ class HeadlineFeatureAggregator:
                      token_activations: np.ndarray,
                      token_ids: List[int],
                      token_strings: List[str],
-                     predicted_label: str, true_label: str):
+                     predicted_label: str, true_label: str,
+                     confidence: float = None):
         """Aggregate features across all tokens in a headline."""
         if token_activations.size == 0:
             return
@@ -116,6 +117,7 @@ class HeadlineFeatureAggregator:
             "row_id": int(prompt_idx),
             "prompt": prompt_text,
             "predicted_label": predicted_label,
+            "confidence": float(confidence) if confidence is not None else None,
             "true_label": true_label,
             "correct": predicted_label == true_label,
             "num_tokens": int(token_activations.shape[0]),
@@ -131,6 +133,7 @@ class HeadlineFeatureAggregator:
         token_strings: List[str],
         predicted_label: str, 
         true_label: str,
+        confidence: float,
         baseline_features: dict,
         features_to_ablate: List[int]
     ):
@@ -186,6 +189,7 @@ class HeadlineFeatureAggregator:
             "row_id": int(prompt_idx),
             "prompt": prompt_text,
             "predicted_label": predicted_label,
+            "confidence": float(confidence) if confidence is not None else None,
             "true_label": true_label,
             "correct": predicted_label == true_label,
             "num_tokens": int(token_activations.shape[0]),

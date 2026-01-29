@@ -6,7 +6,7 @@ type Props = {
   onFeatureClick?: (featureId: number) => void;
 };
 
-export default function HeadlinesView({ onFeatureClick }: Props) {
+export default function AblationView({ onFeatureClick }: Props) {
   const [headlines, setHeadlines] = useState<HeadlineInfo[]>([]);
   const [limit, setLimit] = useState(100);
   const [loading, setLoading] = useState(false);
@@ -20,11 +20,15 @@ export default function HeadlinesView({ onFeatureClick }: Props) {
     fetchHeadlines(limit)
       .then((data) => {
         if (cancelled) return;
-        setHeadlines(data.headlines || []);
+        const rawHeadlines = data.headlines || [];
+        const ablationHeadlines = rawHeadlines.filter(
+          (headline: HeadlineInfo) => headline.num_ablated_features !== undefined
+        );
+        setHeadlines(ablationHeadlines);
       })
       .catch((err) => {
         if (cancelled) return;
-        setError(err.message || "Failed to load headlines.");
+        setError(err.message || "Failed to load ablation headlines.");
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -38,10 +42,17 @@ export default function HeadlinesView({ onFeatureClick }: Props) {
     setExpanded((prev) => ({ ...prev, [rowId]: !prev[rowId] }));
   };
 
+  const getImpactColor = (fraction?: number) => {
+    if (fraction === undefined) return "#6b7280";
+    if (fraction < 0.2) return "#22c55e";
+    if (fraction < 0.5) return "#eab308";
+    return "#ef4444";
+  };
+
   return (
     <div className="headlines-view">
       <header className="headlines-header">
-        <h1>Headlines</h1>
+        <h1>Ablation</h1>
         <div className="control-row">
           <label>
             Max headlines
@@ -56,10 +67,17 @@ export default function HeadlinesView({ onFeatureClick }: Props) {
         </div>
       </header>
 
-      {loading && <div>Loading headlines…</div>}
+      {loading && <div>Loading ablation headlines…</div>}
       {error && <div className="error-message">{error}</div>}
 
-      {!loading && !error && (
+      {!loading && !error && headlines.length === 0 && (
+        <div className="no-ablation-data">
+          No ablation data found for this run. Run the ablation cell to see
+          ablation metrics.
+        </div>
+      )}
+
+      {!loading && !error && headlines.length > 0 && (
         <div className="headlines-table-wrapper">
           <table className="feature-table">
             <thead>
@@ -67,6 +85,7 @@ export default function HeadlinesView({ onFeatureClick }: Props) {
                 <th>ID</th>
                 <th>Prediction</th>
                 <th>Confidence</th>
+                <th>Ablation Impact</th>
                 <th>True Label</th>
                 <th>Headline</th>
                 <th>Top Features</th>
@@ -93,6 +112,17 @@ export default function HeadlinesView({ onFeatureClick }: Props) {
                       {h.confidence !== undefined
                         ? `${(h.confidence * 100).toFixed(1)}%`
                         : "—"}
+                    </td>
+                    <td className="center ablation-metrics">
+                      <div className="ablation-count">
+                        {h.num_ablated_features}/{h.total_baseline_features} ablated
+                      </div>
+                      <div
+                        className="ablation-fraction"
+                        style={{ color: getImpactColor(h.ablation_fraction) }}
+                      >
+                        {(h.ablation_fraction! * 100).toFixed(1)}% removed
+                      </div>
                     </td>
                     <td className="center">{h.true_label}</td>
                     <td style={{ maxWidth: "360px" }}>
@@ -130,4 +160,3 @@ export default function HeadlinesView({ onFeatureClick }: Props) {
     </div>
   );
 }
-

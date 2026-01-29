@@ -269,6 +269,19 @@ class FeatureProbeRequestHandler(SimpleHTTPRequestHandler):
                 self._send_json({"error": str(exc)}, status=400)
             return
 
+        if parsed.path == "/api/metadata":
+            try:
+                metadata_path = self.data_store.run_path / "metadata.json"
+                if metadata_path.exists():
+                    with open(metadata_path, "r", encoding="utf-8") as f:
+                        metadata = json.load(f)
+                    self._send_json({"metadata": metadata})
+                else:
+                    self._send_json({"metadata": {}})
+            except Exception as exc:  # noqa: BLE001
+                self._send_json({"error": str(exc)}, status=400)
+            return
+
         if parsed.path == "/api/feature":
             params = parse_qs(parsed.query)
             feature_id = params.get("id")

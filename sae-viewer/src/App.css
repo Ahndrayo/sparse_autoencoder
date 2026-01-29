@@ -393,6 +393,19 @@ p { whitespace: nowrap; }
   color: #9ca3af;
 }
 
+.no-ablation-data {
+  padding: 12px;
+  border-radius: 8px;
+  background: #f3f4f6;
+  color: #4b5563;
+  margin-top: 12px;
+}
+
+.tab-buttons button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .error-message {
   padding: 8px;
   border-radius: 8px;

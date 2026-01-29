@@ -47,6 +47,7 @@ export type HeadlineInfo = {
   row_id: number;
   prompt: string;
   predicted_label: string;
+  confidence?: number;
   true_label: string;
   correct: boolean;
   num_tokens: number;
