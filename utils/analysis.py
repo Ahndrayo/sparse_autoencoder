@@ -135,7 +135,9 @@ class HeadlineFeatureAggregator:
         true_label: str,
         confidence: float,
         baseline_features: dict,
-        features_to_ablate: List[int]
+        features_to_ablate: List[int],
+        baseline_prediction: str,
+        baseline_confidence: float
     ):
         """
         Aggregate features with ablation comparison metrics.
@@ -163,6 +165,19 @@ class HeadlineFeatureAggregator:
             for fid in top_feature_ids if max_activation_per_feature[fid] > 0
         ]
         
+        # Compute transition and confidence delta
+        baseline_correct = baseline_prediction == true_label
+        ablated_correct = predicted_label == true_label
+        if baseline_correct and ablated_correct:
+            transition = "Correct -> Correct"
+        elif baseline_correct and not ablated_correct:
+            transition = "Correct -> Wrong"
+        elif not baseline_correct and ablated_correct:
+            transition = "Wrong -> Correct"
+        else:
+            transition = "Wrong -> Wrong"
+        confidence_delta = float(confidence) - float(baseline_confidence)
+
         # Compute ablation metrics
         baseline_top_features = baseline_features.get('top_features', [])
         baseline_feature_ids = {feat['feature_id'] for feat in baseline_top_features}
@@ -190,8 +205,12 @@ class HeadlineFeatureAggregator:
             "prompt": prompt_text,
             "predicted_label": predicted_label,
             "confidence": float(confidence) if confidence is not None else None,
+            "baseline_prediction": baseline_prediction,
+            "baseline_confidence": float(baseline_confidence) if baseline_confidence is not None else None,
+            "confidence_delta": float(confidence_delta),
+            "transition": transition,
             "true_label": true_label,
-            "correct": predicted_label == true_label,
+            "correct": ablated_correct,
             "num_tokens": int(token_activations.shape[0]),
             "features": features,
             "num_ablated_features": int(num_ablated_features),

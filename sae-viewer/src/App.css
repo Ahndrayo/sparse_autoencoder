@@ -401,6 +401,17 @@ p { whitespace: nowrap; }
   margin-top: 12px;
 }
 
+.confidence-badge {
+  font-size: 0.75rem;
+  color: #6b7280;
+  margin-top: 2px;
+}
+
+.transition-cell {
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
 .tab-buttons button:disabled {
   opacity: 0.5;
   cursor: not-allowed;

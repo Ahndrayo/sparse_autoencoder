@@ -48,6 +48,10 @@ export type HeadlineInfo = {
   prompt: string;
   predicted_label: string;
   confidence?: number;
+  baseline_prediction?: string;
+  baseline_confidence?: number;
+  confidence_delta?: number;
+  transition?: string;
   true_label: string;
   correct: boolean;
   num_tokens: number;

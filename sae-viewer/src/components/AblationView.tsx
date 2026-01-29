@@ -83,10 +83,11 @@ export default function AblationView({ onFeatureClick }: Props) {
             <thead>
               <tr>
                 <th>ID</th>
-                <th>Prediction</th>
-                <th>Confidence</th>
+                <th>Base Prediction</th>
+                <th>Ablated Prediction</th>
+                <th>Delta Confidence</th>
+                <th>Transition</th>
                 <th>Ablation Impact</th>
-                <th>True Label</th>
                 <th>Headline</th>
                 <th>Top Features</th>
               </tr>
@@ -99,6 +100,14 @@ export default function AblationView({ onFeatureClick }: Props) {
                 return (
                   <tr key={h.row_id}>
                     <td className="center">{h.row_id}</td>
+                    <td className="center">
+                      {h.baseline_prediction || "—"}
+                      {h.baseline_confidence !== undefined && (
+                        <div className="confidence-badge">
+                          {(h.baseline_confidence * 100).toFixed(1)}%
+                        </div>
+                      )}
+                    </td>
                     <td
                       className="center"
                       style={{
@@ -107,11 +116,34 @@ export default function AblationView({ onFeatureClick }: Props) {
                       }}
                     >
                       {h.predicted_label}
+                      {h.confidence !== undefined && (
+                        <div className="confidence-badge">
+                          {(h.confidence * 100).toFixed(1)}%
+                        </div>
+                      )}
                     </td>
-                    <td className="center">
-                      {h.confidence !== undefined
-                        ? `${(h.confidence * 100).toFixed(1)}%`
+                    <td
+                      className="center"
+                      style={{
+                        color:
+                          h.confidence_delta === undefined
+                            ? "#6b7280"
+                            : Math.abs(h.confidence_delta) < 0.05
+                            ? "#6b7280"
+                            : h.confidence_delta > 0
+                            ? "#22c55e"
+                            : "#ef4444",
+                        fontWeight: "bold",
+                      }}
+                    >
+                      {h.confidence_delta !== undefined
+                        ? `${h.confidence_delta >= 0 ? "+" : ""}${(
+                            h.confidence_delta * 100
+                          ).toFixed(1)}%`
                         : "—"}
+                    </td>
+                    <td className="center transition-cell">
+                      {h.transition || "—"}
                     </td>
                     <td className="center ablation-metrics">
                       <div className="ablation-count">
