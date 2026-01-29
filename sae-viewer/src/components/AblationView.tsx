@@ -86,7 +86,7 @@ export default function AblationView({ onFeatureClick }: Props) {
                 <th>Base Prediction</th>
                 <th>Ablated Prediction</th>
                 <th>Delta Confidence</th>
-                <th>Transition</th>
+                <th>Flip Outcome</th>
                 <th>Ablation Impact</th>
                 <th>Headline</th>
                 <th>Top Features</th>
@@ -142,7 +142,18 @@ export default function AblationView({ onFeatureClick }: Props) {
                           ).toFixed(1)}%`
                         : "—"}
                     </td>
-                    <td className="center transition-cell">
+                    <td
+                      className="center transition-cell"
+                      style={{
+                        color:
+                          h.transition === "C -> W"
+                            ? "#ef4444"
+                            : h.transition === "W -> C"
+                            ? "#22c55e"
+                            : "#6b7280",
+                        fontWeight: h.transition ? "bold" : "normal",
+                      }}
+                    >
                       {h.transition || "—"}
                     </td>
                     <td className="center ablation-metrics">

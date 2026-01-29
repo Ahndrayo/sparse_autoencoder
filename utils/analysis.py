@@ -168,14 +168,12 @@ class HeadlineFeatureAggregator:
         # Compute transition and confidence delta
         baseline_correct = baseline_prediction == true_label
         ablated_correct = predicted_label == true_label
-        if baseline_correct and ablated_correct:
-            transition = "Correct -> Correct"
-        elif baseline_correct and not ablated_correct:
-            transition = "Correct -> Wrong"
+        if baseline_correct and not ablated_correct:
+            transition = "C -> W"
         elif not baseline_correct and ablated_correct:
-            transition = "Wrong -> Correct"
+            transition = "W -> C"
         else:
-            transition = "Wrong -> Wrong"
+            transition = None
         confidence_delta = float(confidence) - float(baseline_confidence)
 
         # Compute ablation metrics
