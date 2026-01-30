@@ -9,7 +9,7 @@ def make_analysis_run_dir(repo_root: str) -> Path:
     # discover next run id
     ids = []
     for p in base.glob("*_run-*"):
-        m = re.search(r"_run-(\d+)$", p.name)
+        m = re.search(r"_run-(\d+)", p.name)
         if m:
             try:
                 ids.append(int(m.group(1)))
