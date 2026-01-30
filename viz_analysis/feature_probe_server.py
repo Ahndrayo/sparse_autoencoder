@@ -14,11 +14,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from dataclasses import dataclass
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
+
+# Add project root to sys.path so we can import from top-level utils
+repo_root = Path(__file__).resolve().parent.parent
+if str(repo_root) not in sys.path:
+    sys.path.insert(0, str(repo_root))
 
 from utils.run_picker import get_latest_run, get_run_by_id
 
@@ -47,7 +53,7 @@ class FeatureProbeData:
         summary_path = run_path / "feature_stats.json"
         if not summary_path.exists():
             raise FileNotFoundError(
-                f"Expected feature_stats.json in {run_path}, please rerun main.py."
+                f"Expected feature_stats.json in {run_path}, please rerun the inference cell in Sentiment_Classification.ipynb."
             )
         with open(summary_path, "r", encoding="utf-8") as f:
             feature_stats = json.load(f)
@@ -265,6 +271,19 @@ class FeatureProbeRequestHandler(SimpleHTTPRequestHandler):
             try:
                 headlines = self.data_store.get_headlines(limit)
                 self._send_json({"headlines": headlines})
+            except Exception as exc:  # noqa: BLE001
+                self._send_json({"error": str(exc)}, status=400)
+            return
+
+        if parsed.path == "/api/metadata":
+            try:
+                metadata_path = self.data_store.run_path / "metadata.json"
+                if metadata_path.exists():
+                    with open(metadata_path, "r", encoding="utf-8") as f:
+                        metadata = json.load(f)
+                    self._send_json({"metadata": metadata})
+                else:
+                    self._send_json({"metadata": {}})
             except Exception as exc:  # noqa: BLE001
                 self._send_json({"error": str(exc)}, status=400)
             return

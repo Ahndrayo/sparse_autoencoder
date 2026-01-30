@@ -47,6 +47,11 @@ export type HeadlineInfo = {
   row_id: number;
   prompt: string;
   predicted_label: string;
+  confidence?: number;
+  baseline_prediction?: string;
+  baseline_confidence?: number;
+  confidence_delta?: number;
+  transition?: string;
   true_label: string;
   correct: boolean;
   num_tokens: number;
@@ -57,6 +62,10 @@ export type HeadlineInfo = {
     token_id: number;
     token_str: string;
   }>;
+  // Ablation metrics (optional, only present for ablation runs)
+  num_ablated_features?: number;
+  total_baseline_features?: number;
+  ablation_fraction?: number;
 };
 
 export function zip_sequence(sequence: SequenceInfo) {

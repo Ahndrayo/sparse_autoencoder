@@ -375,6 +375,48 @@ p { whitespace: nowrap; }
   background: #f5f5f5;
 }
 
+.ablation-metrics {
+  font-size: 0.85rem;
+}
+
+.ablation-count {
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.ablation-fraction {
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+
+.no-ablation {
+  color: #9ca3af;
+}
+
+.no-ablation-data {
+  padding: 12px;
+  border-radius: 8px;
+  background: #f3f4f6;
+  color: #4b5563;
+  margin-top: 12px;
+}
+
+.confidence-badge {
+  font-size: 0.75rem;
+  color: #6b7280;
+  margin-top: 2px;
+}
+
+.transition-cell {
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.tab-buttons button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .error-message {
   padding: 8px;
   border-radius: 8px;

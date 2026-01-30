@@ -65,3 +65,23 @@ export async function fetchHeadlines(
   }
   return res.json();
 }
+
+export async function fetchMetadata(): Promise<{
+  metadata: {
+    ablated_features?: number[];
+    accuracy?: number;
+    num_samples?: number;
+    [key: string]: any;
+  };
+}> {
+  const url = new URL(`${API_BASE}/api/metadata`);
+  const res = await fetch(url.toString(), {
+    headers: {
+      "Accept": "application/json",
+    },
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to load metadata: ${res.statusText}`);
+  }
+  return res.json();
+}
