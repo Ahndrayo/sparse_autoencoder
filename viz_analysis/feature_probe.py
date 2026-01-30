@@ -1,12 +1,18 @@
 # viz_analysis/feature_probe.py
 import json
+import sys
 import numpy as np
 from pathlib import Path
 from transformer_lens import HookedTransformer
+
+# Add project root to sys.path
+repo_root = Path(__file__).resolve().parent.parent
+if str(repo_root) not in sys.path:
+    sys.path.insert(0, str(repo_root))
+
 from utils.run_picker import get_latest_run
 
 # Load saved data
-repo_root = Path(__file__).resolve().parent.parent
 analysis_dir = repo_root / "analysis_data"
 latest_run = get_latest_run(analysis_dir)
 print("Loading data from: ", latest_run)
