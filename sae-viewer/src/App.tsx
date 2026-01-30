@@ -20,10 +20,7 @@ function App() {
   useEffect(() => {
     fetchMetadata()
       .then((data) => {
-        setHasAblationData(
-          Array.isArray(data.metadata.ablated_features) &&
-            data.metadata.ablated_features.length > 0
-        );
+        setHasAblationData(data.metadata.ablation_mode !== undefined);
       })
       .catch(() => setHasAblationData(false));
   }, []);
