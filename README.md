@@ -11,7 +11,9 @@ This repository trains sparse autoencoders (SAEs) on FinBERT activations for sen
 
 ## Installation
 
-### 1. Install Python Dependencies
+### 1. Install Python and the project's dependencies
+
+Python 3.12.0 is recommended for this project.
 
 ```bash
 pip install -r requirements.txt
@@ -111,6 +113,11 @@ Opens at `http://localhost:1234` with two tabs:
 - Hover over chips to see activation values
 - Click "Show All" to see all 10 features
 - Click any feature chip to jump to Features tab
+
+#### **Ablation Tab**
+- Greyed out and unclickable if ablation was not done. Metadata contains the "ablation_mode" key, which determines whether this tab is accessible
+- Shows pre- and post-ablation predictions in 3 main metrics: Confidence, Prediction and whether the outcome was flipped
+- Contains the ablation impact as well. This is a work in progress.
 
 #### **Features Tab**
 - Browse top 100 features by metric (mean activation, max activation, fraction active)

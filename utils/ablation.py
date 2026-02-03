@@ -395,6 +395,33 @@ def run_ablation_inference(
                     else:
                         features_for_tracking = features_to_ablate
 
+                    # ---------------------------
+                    # Global "information removed" metrics (baseline-space)
+                    # ---------------------------
+                    global_ablation_fraction = None
+                    global_ablation_energy_fraction = None
+
+                    baseline_max = baseline_features_map[idx].get("max_act_all", None)
+
+                    if baseline_max is not None and features_for_tracking:
+                        # Convert to float32 for stable sums (baseline stored as float16)
+                        baseline_max_f32 = baseline_max.astype(np.float32)
+
+                        # Ensure feature ids are valid & unique (avoid double-counting)
+                        fids = np.array(sorted(set(int(f) for f in features_for_tracking)), dtype=np.int64)
+                        fids = fids[(fids >= 0) & (fids < baseline_max_f32.shape[0])]
+
+                        # Total mass/energy (prefer precomputed totals if present)
+                        total_mass_all = float(baseline_features_map[idx].get("total_mass_all", baseline_max_f32.sum()))
+                        total_energy_all = float(baseline_features_map[idx].get("total_energy_all", (baseline_max_f32 ** 2).sum()))
+
+                        removed_mass = float(baseline_max_f32[fids].sum()) if fids.size > 0 else 0.0
+                        removed_energy = float((baseline_max_f32[fids] ** 2).sum()) if fids.size > 0 else 0.0
+
+                        global_ablation_fraction = (removed_mass / total_mass_all) if total_mass_all > 0 else 0.0
+                        global_ablation_energy_fraction = (removed_energy / total_energy_all) if total_energy_all > 0 else 0.0
+
+
                     headline_aggregator_ablated.add_headline_with_ablation_metrics(
                         prompt_idx=idx,
                         prompt_text=text,
@@ -408,6 +435,8 @@ def run_ablation_inference(
                         features_to_ablate=features_for_tracking,
                         baseline_prediction=baseline_data["predicted_label"],
                         baseline_confidence=baseline_data["confidence"],
+                        global_ablation_fraction=global_ablation_fraction, 
+                        global_ablation_energy_fraction=global_ablation_energy_fraction,
                     )
 
                     all_prompt_metadata_ablated.append(
