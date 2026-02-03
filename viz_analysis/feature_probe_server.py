@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from dataclasses import dataclass
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -124,6 +125,20 @@ class FeatureProbeData:
     @property
     def num_samples(self) -> int:
         return int(self.feature_stats.get("num_samples", 0))
+
+    @property
+    def run_name(self) -> str:
+        return self.run_path.name
+
+    @property
+    def run_id(self) -> int | None:
+        match = re.search(r"run-(\d+)", self.run_path.name)
+        if match is None:
+            return None
+        try:
+            return int(match.group(1))
+        except ValueError:
+            return None
 
     def get_headlines(self, limit: int = 100) -> list[dict[str, Any]]:
         limit = max(1, min(limit, len(self.headline_features)))
@@ -281,9 +296,15 @@ class FeatureProbeRequestHandler(SimpleHTTPRequestHandler):
                 if metadata_path.exists():
                     with open(metadata_path, "r", encoding="utf-8") as f:
                         metadata = json.load(f)
+                    metadata.setdefault("run_name", self.data_store.run_name)
+                    if self.data_store.run_id is not None:
+                        metadata.setdefault("run_id", self.data_store.run_id)
                     self._send_json({"metadata": metadata})
                 else:
-                    self._send_json({"metadata": {}})
+                    metadata = {"run_name": self.data_store.run_name}
+                    if self.data_store.run_id is not None:
+                        metadata["run_id"] = self.data_store.run_id
+                    self._send_json({"metadata": metadata})
             except Exception as exc:  # noqa: BLE001
                 self._send_json({"error": str(exc)}, status=400)
             return
