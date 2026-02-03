@@ -137,7 +137,9 @@ class HeadlineFeatureAggregator:
         baseline_features: dict,
         features_to_ablate: List[int],
         baseline_prediction: str,
-        baseline_confidence: float
+        baseline_confidence: float,
+        global_ablation_fraction: float = None,
+        global_ablation_energy_fraction: float = None,
     ):
         """
         Aggregate features with ablation comparison metrics.
@@ -213,7 +215,9 @@ class HeadlineFeatureAggregator:
             "features": features,
             "num_ablated_features": int(num_ablated_features),
             "total_baseline_features": int(total_baseline_features),
-            "ablation_fraction": float(ablation_fraction)
+            "ablation_fraction": float(ablation_fraction),
+            "ablation_fraction_global": float(global_ablation_fraction) if global_ablation_fraction is not None else None,
+            "ablation_energy_fraction_global": float(global_ablation_energy_fraction) if global_ablation_energy_fraction is not None else None,
         })
     
     def export(self):

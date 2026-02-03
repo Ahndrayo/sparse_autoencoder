@@ -194,15 +194,34 @@ def run_baseline_inference(
                         }
                         for fid in top_10_indices
                     ]
-                    total_activation = sum(feat["activation"] for feat in top_features)
+                    total_activation_top10 = sum(feat["activation"] for feat in top_features)
+
+                    total_mass_all = float(max_activations_per_feature.sum())
+                    total_energy_all = float((max_activations_per_feature ** 2).sum())
+
                     baseline_features_map[idx] = {
                         "top_features": top_features,
-                        "total_activation": total_activation,
+                        "total_activation": total_activation_top10,
+                        "total_mass_all": total_mass_all,     # L1, all features
+                        "total_energy_all": total_energy_all, # L2, all features
+                        "max_act_all": max_activations_per_feature.astype(np.float16), # store activations vector
                     }
                 else:
-                    baseline_features_map[idx] = {"top_features": [], "total_activation": 0.0}
+                    baseline_features_map[idx] = {
+                        "top_features": [],
+                        "total_activation": 0.0,
+                        "total_mass_all": 0.0,
+                        "total_energy_all": 0.0,
+                        "max_act_all": None,
+                    }
             else:
-                baseline_features_map[idx] = {"top_features": [], "total_activation": 0.0}
+                baseline_features_map[idx] = {
+                    "top_features": [],
+                    "total_activation": 0.0,
+                    "total_mass_all": 0.0,
+                    "total_energy_all": 0.0,
+                    "max_act_all": None,
+                }
 
             if (idx + 1) % 20 == 0:
                 print(f"  Baseline: {idx + 1}/{min(max_samples, len(test_ds))} samples")
