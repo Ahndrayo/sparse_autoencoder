@@ -97,6 +97,17 @@ export default function AblationView({ onFeatureClick }: Props) {
                 const topFeatures = h.features || [];
                 const showAll = expanded[h.row_id] || false;
                 const displayFeatures = showAll ? topFeatures.slice(0, 10) : topFeatures.slice(0, 3);
+                const globalFraction = h.ablation_fraction_global;
+                const globalEnergyFraction = h.ablation_energy_fraction_global;
+                const impactFraction = globalFraction ?? h.ablation_fraction;
+                const impactPercent =
+                  impactFraction !== undefined ? `${(impactFraction * 100).toFixed(1)}%` : "â€”";
+                const energyPercent =
+                  globalEnergyFraction !== undefined
+                    ? `${(globalEnergyFraction * 100).toFixed(1)}%`
+                    : "â€”";
+                const hasGlobalMetrics =
+                  globalFraction !== undefined || globalEnergyFraction !== undefined;
                 return (
                   <tr key={h.row_id}>
                     <td className="center">{h.row_id}</td>
@@ -157,15 +168,37 @@ export default function AblationView({ onFeatureClick }: Props) {
                       {h.transition || "—"}
                     </td>
                     <td className="center ablation-metrics">
-                      <div className="ablation-count">
-                        {h.num_ablated_features}/{h.total_baseline_features} ablated
-                      </div>
-                      <div
-                        className="ablation-fraction"
-                        style={{ color: getImpactColor(h.ablation_fraction) }}
-                      >
-                        {(h.ablation_fraction! * 100).toFixed(1)}% removed
-                      </div>
+                      {hasGlobalMetrics ? (
+                        <>
+                          <div className="ablation-count">
+                            Global mass removed
+                          </div>
+                          <div
+                            className="ablation-fraction"
+                            style={{ color: getImpactColor(impactFraction) }}
+                          >
+                            {impactPercent}
+                          </div>
+                          <div className="ablation-count">
+                            Global energy removed
+                          </div>
+                          <div className="ablation-fraction">
+                            {energyPercent}
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="ablation-count">
+                            {h.num_ablated_features}/{h.total_baseline_features} ablated
+                          </div>
+                          <div
+                            className="ablation-fraction"
+                            style={{ color: getImpactColor(h.ablation_fraction) }}
+                          >
+                            {(h.ablation_fraction! * 100).toFixed(1)}% removed
+                          </div>
+                        </>
+                      )}
                     </td>
                     <td className="center">{h.true_label}</td>
                     <td style={{ maxWidth: "360px" }}>
