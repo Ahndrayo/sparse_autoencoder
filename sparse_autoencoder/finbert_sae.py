@@ -92,7 +92,7 @@ def load_sae(layer: int = 8, latent_size: str = "32k", subfolder: str = None, de
     sae.eval()
     
     print(f"✓ Loaded SAE from {sae_path}")
-    print(f"  Layer: {config['layer']}")
+    print(f"  Layer: {config['layer'] + 1}")  # +1 to match human counting
     print(f"  Input dim: {config['input_dim']}")
     print(f"  Latent dim: {config['latent_dim']}")
     
