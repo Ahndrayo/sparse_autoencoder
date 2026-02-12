@@ -71,6 +71,8 @@ export async function fetchMetadata(): Promise<{
     ablated_features?: number[];
     accuracy?: number;
     num_samples?: number;
+    run_id?: number;
+    run_name?: string;
     [key: string]: any;
   };
 }> {

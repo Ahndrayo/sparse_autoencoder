@@ -9,6 +9,9 @@ function App() {
   const [activeTab, setActiveTab] = useState<"headlines" | "ablation" | "features">("headlines");
   const [searchFeatureId, setSearchFeatureId] = useState<number | null>(null);
   const [hasAblationData, setHasAblationData] = useState(false);
+  const [runLabel, setRunLabel] = useState<string | null>(null);
+  const [runAccuracy, setRunAccuracy] = useState<number | null>(null);
+  const [runSampleCount, setRunSampleCount] = useState<number | null>(null);
 
   // When a feature is selected from headlines, switch tab
   useEffect(() => {
@@ -20,15 +23,41 @@ function App() {
   useEffect(() => {
     fetchMetadata()
       .then((data) => {
-        setHasAblationData(data.metadata.ablation_mode !== undefined);
+        const metadata = data.metadata || {};
+        setHasAblationData(metadata.ablation_mode !== undefined);
+        if (metadata.run_id !== undefined) {
+          setRunLabel(`run-${String(metadata.run_id).padStart(3, "0")}`);
+        } else if (metadata.run_name) {
+          setRunLabel(metadata.run_name);
+        } else {
+          setRunLabel(null);
+        }
+        setRunAccuracy(
+          typeof metadata.accuracy === "number" ? metadata.accuracy : null
+        );
+        setRunSampleCount(
+          typeof metadata.num_samples === "number" ? metadata.num_samples : null
+        );
       })
-      .catch(() => setHasAblationData(false));
+      .catch(() => {
+        setHasAblationData(false);
+        setRunLabel(null);
+        setRunAccuracy(null);
+        setRunSampleCount(null);
+      });
   }, []);
 
   return (
     <div className="app-shell tabs-shell">
       <header className="app-header">
-        <h1>SAE Feature Explorer</h1>
+        <div>
+          <h1>SAE Feature Explorer</h1>
+          {runLabel && (
+            <div className="run-label">
+              Run: <strong>{runLabel}</strong>
+            </div>
+          )}
+        </div>
         <div className="tab-buttons">
           <button
             className={activeTab === "headlines" ? "active" : ""}
@@ -58,9 +87,17 @@ function App() {
       </header>
 
       {activeTab === "headlines" ? (
-        <HeadlinesView onFeatureClick={(fid) => setSearchFeatureId(fid)} />
+        <HeadlinesView
+          onFeatureClick={(fid) => setSearchFeatureId(fid)}
+          accuracy={runAccuracy}
+          numSamples={runSampleCount}
+        />
       ) : activeTab === "ablation" ? (
-        <AblationView onFeatureClick={(fid) => setSearchFeatureId(fid)} />
+        <AblationView
+          onFeatureClick={(fid) => setSearchFeatureId(fid)}
+          accuracy={runAccuracy}
+          numSamples={runSampleCount}
+        />
       ) : (
         <FeaturesView
           initialFeatureId={searchFeatureId}

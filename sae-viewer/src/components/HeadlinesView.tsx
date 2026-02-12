@@ -1,17 +1,28 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { fetchHeadlines } from "../interpAPI";
 import { HeadlineInfo } from "../types";
 
 type Props = {
   onFeatureClick?: (featureId: number) => void;
+  accuracy?: number | null;
+  numSamples?: number | null;
 };
 
-export default function HeadlinesView({ onFeatureClick }: Props) {
+type SortKey =
+  | "row_id"
+  | "predicted_label"
+  | "confidence"
+  | "true_label"
+  | "prompt";
+
+export default function HeadlinesView({ onFeatureClick, accuracy, numSamples }: Props) {
   const [headlines, setHeadlines] = useState<HeadlineInfo[]>([]);
   const [limit, setLimit] = useState(100);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Record<number, boolean>>({});
+  const [sortKey, setSortKey] = useState<SortKey>("row_id");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
   useEffect(() => {
     let cancelled = false;
@@ -38,10 +49,59 @@ export default function HeadlinesView({ onFeatureClick }: Props) {
     setExpanded((prev) => ({ ...prev, [rowId]: !prev[rowId] }));
   };
 
+  const sortedHeadlines = useMemo(() => {
+    const sorted = [...headlines];
+    const dir = sortDir === "asc" ? 1 : -1;
+    sorted.sort((a, b) => {
+      const valueA = a[sortKey];
+      const valueB = b[sortKey];
+      if (valueA === undefined || valueA === null) return 1;
+      if (valueB === undefined || valueB === null) return -1;
+      if (typeof valueA === "number" && typeof valueB === "number") {
+        return (valueA - valueB) * dir;
+      }
+      return String(valueA).localeCompare(String(valueB)) * dir;
+    });
+    return sorted;
+  }, [headlines, sortDir, sortKey]);
+
+  const toggleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortDir((prev) => (prev === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      setSortDir("asc");
+    }
+  };
+
+  const renderSortLabel = (label: string, key: SortKey) => {
+    const isActive = sortKey === key;
+    const indicator = isActive ? (sortDir === "asc" ? "^" : "v") : "";
+    return (
+      <button
+        className={`sortable-button ${isActive ? "active" : ""}`}
+        onClick={() => toggleSort(key)}
+        type="button"
+      >
+        {label}
+        {indicator && <span className="sort-indicator">{indicator}</span>}
+      </button>
+    );
+  };
+
   return (
     <div className="headlines-view">
       <header className="headlines-header">
         <h1>Headlines</h1>
+        {accuracy !== null && accuracy !== undefined && (
+          <p className="accuracy-display">
+            <strong>Model Accuracy:</strong>{" "}
+            <span className="accuracy-value">{(accuracy * 100).toFixed(2)}%</span>
+            {numSamples ? (
+              <span className="sample-count"> ({numSamples} samples)</span>
+            ) : null}
+          </p>
+        )}
         <div className="control-row">
           <label>
             Max headlines
@@ -64,16 +124,16 @@ export default function HeadlinesView({ onFeatureClick }: Props) {
           <table className="feature-table">
             <thead>
               <tr>
-                <th>ID</th>
-                <th>Prediction</th>
-                <th>Confidence</th>
-                <th>True Label</th>
-                <th>Headline</th>
+                <th>{renderSortLabel("ID", "row_id")}</th>
+                <th>{renderSortLabel("Prediction", "predicted_label")}</th>
+                <th>{renderSortLabel("Confidence", "confidence")}</th>
+                <th>{renderSortLabel("True Label", "true_label")}</th>
+                <th>{renderSortLabel("Headline", "prompt")}</th>
                 <th>Top Features</th>
               </tr>
             </thead>
             <tbody>
-              {headlines.map((h) => {
+              {sortedHeadlines.map((h) => {
                 const topFeatures = h.features || [];
                 const showAll = expanded[h.row_id] || false;
                 const displayFeatures = showAll ? topFeatures.slice(0, 10) : topFeatures.slice(0, 3);

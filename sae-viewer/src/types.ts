@@ -66,6 +66,8 @@ export type HeadlineInfo = {
   num_ablated_features?: number;
   total_baseline_features?: number;
   ablation_fraction?: number;
+  ablation_fraction_global?: number;
+  ablation_energy_fraction_global?: number;
 };
 
 export function zip_sequence(sequence: SequenceInfo) {

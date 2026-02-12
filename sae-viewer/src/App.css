@@ -250,6 +250,27 @@ p { whitespace: nowrap; }
   border-bottom: 1px solid #eef2f7;
 }
 
+.sortable-button {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+}
+
+.sortable-button.active {
+  color: #2563eb !important;
+  font-weight: 600;
+}
+
+.sort-indicator {
+  margin-left: 6px;
+  font-size: 0.75rem;
+}
+
 .feature-table tbody tr {
   cursor: pointer;
   transition: background 0.2s ease;
@@ -315,6 +336,11 @@ p { whitespace: nowrap; }
   justify-content: space-between;
   align-items: center;
   gap: 1rem;
+}
+
+.run-label {
+  font-size: 0.9rem;
+  color: #475569;
 }
 
 .tab-buttons button {
