@@ -50,7 +50,7 @@ class SparseAutoencoder(nn.Module):
             return self.encode(x)
 
 
-def load_sae(layer: int = 8, latent_size: str = "32k", device: torch.device = None):
+def load_sae(layer: int = 8, latent_size: str = "32k", subfolder: str = None, device: torch.device = None):
     """
     Load a trained SAE model.
     
@@ -66,20 +66,27 @@ def load_sae(layer: int = 8, latent_size: str = "32k", device: torch.device = No
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
-    sae_path = f"./finbert_sae/layer_{layer}_{latent_size}.pt"
+    if subfolder is None:
+        subfolder = f"layer_{layer}"
+
+    # Dynamic SAE path
+    sae_path = f"./finbert_sae/{subfolder}/layer_{layer}_{latent_size}.pt"
     
     # Load checkpoint
     checkpoint = torch.load(sae_path, map_location=device)
     
     # Create SAE model
     config = checkpoint['config']
-    sae = SparseAutoencoder(input_dim=config['input_dim'], latent_dim=config['latent_dim'])
+    sae = SparseAutoencoder(
+        input_dim=config['input_dim'], 
+        latent_dim=config['latent_dim']
+    )
     
     # Load weights
-    sae.encoder.weight.data = checkpoint['encoder_weight']
-    sae.encoder.bias.data = checkpoint['encoder_bias']
-    sae.decoder.weight.data = checkpoint['decoder_weight']
-    sae.decoder.bias.data = checkpoint['decoder_bias']
+    sae.encoder.weight.data.copy_(checkpoint["encoder_weight"])
+    sae.encoder.bias.data.copy_(checkpoint["encoder_bias"])
+    sae.decoder.weight.data.copy_(checkpoint["decoder_weight"])
+    sae.decoder.bias.data.copy_(checkpoint["decoder_bias"])
     
     sae.to(device)
     sae.eval()
