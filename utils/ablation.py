@@ -244,10 +244,16 @@ def run_ablation_inference(
     similarity_stats = {"original_counts": [], "expanded_counts": []}
     all_ablated_features_set = set()
 
+    # We are using SAEs and using a global feature set to ablate
     if not skip_hooks and ablation_config["mode"] != "per_sample_top_k":
-        target_layer = model.bert.encoder.layer[layer_to_extract]
+        # target_layer = model.bert.encoder.layer[layer_to_extract]
+        # intervention_hook = create_intervention_hook(sae, features_to_ablate, device, current_sample_data)
+        # hook_handle = target_layer.register_forward_hook(intervention_hook)
+
+        bert_layer = model.bert.encoder.layer[layer_to_extract]
+        target_module = bert_layer.output.dense  # Δr site (W2 v), pre-residual add
         intervention_hook = create_intervention_hook(sae, features_to_ablate, device, current_sample_data)
-        hook_handle = target_layer.register_forward_hook(intervention_hook)
+        hook_handle = target_module.register_forward_hook(intervention_hook)
 
     with torch.no_grad():
         for idx, sample in enumerate(test_ds):
