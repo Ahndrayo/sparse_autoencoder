@@ -179,7 +179,7 @@ class HeadlineFeatureAggregator:
         # Compute ablation metrics
         baseline_top_features = baseline_features.get('top_features', [])
         baseline_feature_ids = {feat['feature_id'] for feat in baseline_top_features}
-        ablated_set = set(features_to_ablate)
+        ablated_set = set(features_to_ablate or [])
         
         # Count how many baseline top features were ablated
         num_ablated_features = len(baseline_feature_ids & ablated_set)
