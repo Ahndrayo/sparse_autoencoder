@@ -9,8 +9,10 @@ function App() {
   const [activeTab, setActiveTab] = useState<"headlines" | "ablation" | "features">("headlines");
   const [searchFeatureId, setSearchFeatureId] = useState<number | null>(null);
   const [hasAblationData, setHasAblationData] = useState(false);
+  const [hasBaselineHeadlines, setHasBaselineHeadlines] = useState(true);
   const [runLabel, setRunLabel] = useState<string | null>(null);
-  const [runAccuracy, setRunAccuracy] = useState<number | null>(null);
+  const [baselineAccuracy, setBaselineAccuracy] = useState<number | null>(null);
+  const [ablatedAccuracy, setAblatedAccuracy] = useState<number | null>(null);
   const [runSampleCount, setRunSampleCount] = useState<number | null>(null);
 
   // When a feature is selected from headlines, switch tab
@@ -24,7 +26,11 @@ function App() {
     fetchMetadata()
       .then((data) => {
         const metadata = data.metadata || {};
-        setHasAblationData(metadata.ablation_mode !== undefined);
+        const isAblationRun = metadata.ablation_mode !== undefined;
+        setHasAblationData(isAblationRun);
+        setHasBaselineHeadlines(
+          isAblationRun ? metadata.has_baseline_headlines === true : true
+        );
         if (metadata.run_id !== undefined) {
           setRunLabel(`run-${String(metadata.run_id).padStart(3, "0")}`);
         } else if (metadata.run_name) {
@@ -32,17 +38,35 @@ function App() {
         } else {
           setRunLabel(null);
         }
-        setRunAccuracy(
-          typeof metadata.accuracy === "number" ? metadata.accuracy : null
-        );
+        if (isAblationRun) {
+          setBaselineAccuracy(
+            typeof metadata.baseline_accuracy === "number"
+              ? metadata.baseline_accuracy
+              : null
+          );
+          setAblatedAccuracy(
+            typeof metadata.ablated_accuracy === "number"
+              ? metadata.ablated_accuracy
+              : typeof metadata.accuracy === "number"
+              ? metadata.accuracy
+              : null
+          );
+        } else {
+          const nonAblatedAccuracy =
+            typeof metadata.accuracy === "number" ? metadata.accuracy : null;
+          setBaselineAccuracy(nonAblatedAccuracy);
+          setAblatedAccuracy(nonAblatedAccuracy);
+        }
         setRunSampleCount(
           typeof metadata.num_samples === "number" ? metadata.num_samples : null
         );
       })
       .catch(() => {
         setHasAblationData(false);
+        setHasBaselineHeadlines(true);
         setRunLabel(null);
-        setRunAccuracy(null);
+        setBaselineAccuracy(null);
+        setAblatedAccuracy(null);
         setRunSampleCount(null);
       });
   }, []);
@@ -89,13 +113,15 @@ function App() {
       {activeTab === "headlines" ? (
         <HeadlinesView
           onFeatureClick={(fid) => setSearchFeatureId(fid)}
-          accuracy={runAccuracy}
+          accuracy={baselineAccuracy}
           numSamples={runSampleCount}
+          isAblationRun={hasAblationData}
+          hasBaselineHeadlines={hasBaselineHeadlines}
         />
       ) : activeTab === "ablation" ? (
         <AblationView
           onFeatureClick={(fid) => setSearchFeatureId(fid)}
-          accuracy={runAccuracy}
+          accuracy={ablatedAccuracy}
           numSamples={runSampleCount}
         />
       ) : (

@@ -2,7 +2,7 @@
 
 import numpy as np
 import torch
-from typing import List, Dict, Tuple
+from typing import Any, List, Dict, Tuple
 
 
 def create_intervention_hook(sae, features_to_ablate: List[int], device, current_sample_data: Dict = None):
@@ -117,10 +117,11 @@ def run_baseline_inference(
     layer_to_extract: int,
     max_samples: int,
     max_seq_length: int,
-) -> Tuple[List[Dict], Dict, float]:
+) -> Tuple[List[Dict], Dict, float, List[Dict[str, Any]]]:
     """Run baseline inference without ablation."""
     baseline_results = []
     baseline_features_map = {}
+    baseline_headlines = []
     target_layer = model.bert.encoder.layer[layer_to_extract]
 
     with torch.no_grad():
@@ -132,6 +133,9 @@ def run_baseline_inference(
             true_label = sample["label"]
 
             inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=max_seq_length)
+            token_ids = inputs["input_ids"][0].tolist()
+            raw_tokens = tokenizer.convert_ids_to_tokens(token_ids)
+            prompt_tokens = [tok[2:] if tok.startswith("##") else tok for tok in raw_tokens]
             inputs = inputs.to(device)
 
             outputs = model(**inputs)
@@ -181,6 +185,8 @@ def run_baseline_inference(
                 )
                 valid_mask = attention_mask & not_special
                 bert_activation = bert_activation[valid_mask]
+                filtered_token_ids = [tid for tid, valid in zip(token_ids, valid_mask.tolist()) if valid]
+                filtered_prompt_tokens = [tok for tok, valid in zip(prompt_tokens, valid_mask.tolist()) if valid]
 
                 if bert_activation.shape[0] > 0:
                     sae_features = sae.encode(bert_activation)
@@ -199,10 +205,58 @@ def run_baseline_inference(
                         "top_features": top_features,
                         "total_activation": total_activation,
                     }
+                    max_token_idx_per_feature = sae_features_cpu.argmax(axis=0)
+                    baseline_headline_features = [
+                        {
+                            "feature_id": int(fid),
+                            "max_activation": float(max_activations_per_feature[fid]),
+                            "token_position": int(max_token_idx_per_feature[fid]),
+                            "token_id": int(filtered_token_ids[max_token_idx_per_feature[fid]]),
+                            "token_str": filtered_prompt_tokens[max_token_idx_per_feature[fid]],
+                        }
+                        for fid in top_10_indices
+                        if max_activations_per_feature[fid] > 0
+                    ]
+                    baseline_headlines.append(
+                        {
+                            "row_id": int(idx),
+                            "prompt": text,
+                            "predicted_label": pred_label,
+                            "confidence": float(confidence),
+                            "true_label": model.config.id2label[true_label],
+                            "correct": pred_label == model.config.id2label[true_label],
+                            "num_tokens": int(len(filtered_token_ids)),
+                            "features": baseline_headline_features,
+                        }
+                    )
                 else:
                     baseline_features_map[idx] = {"top_features": [], "total_activation": 0.0}
+                    baseline_headlines.append(
+                        {
+                            "row_id": int(idx),
+                            "prompt": text,
+                            "predicted_label": pred_label,
+                            "confidence": float(confidence),
+                            "true_label": model.config.id2label[true_label],
+                            "correct": pred_label == model.config.id2label[true_label],
+                            "num_tokens": 0,
+                            "features": [],
+                        }
+                    )
             else:
                 baseline_features_map[idx] = {"top_features": [], "total_activation": 0.0}
+                baseline_headlines.append(
+                    {
+                        "row_id": int(idx),
+                        "prompt": text,
+                        "predicted_label": pred_label,
+                        "confidence": float(confidence),
+                        "true_label": model.config.id2label[true_label],
+                        "correct": pred_label == model.config.id2label[true_label],
+                        "num_tokens": 0,
+                        "features": [],
+                    }
+                )
 
             if (idx + 1) % 20 == 0:
                 print(f"  Baseline: {idx + 1}/{min(max_samples, len(test_ds))} samples")
@@ -211,7 +265,7 @@ def run_baseline_inference(
         sum(1 for r in baseline_results if r["predicted_id"] == test_ds[r["sample_idx"]]["label"])
         / len(baseline_results)
     )
-    return baseline_results, baseline_features_map, baseline_accuracy
+    return baseline_results, baseline_features_map, baseline_accuracy, baseline_headlines
 
 
 def run_ablation_inference(

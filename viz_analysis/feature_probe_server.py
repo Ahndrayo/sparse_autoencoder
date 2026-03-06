@@ -36,11 +36,13 @@ HIST_BIN_WIDTH = 0.2
 @dataclass
 class FeatureProbeData:
     run_path: Path
+    run_metadata: dict[str, Any]
     feature_stats: dict[str, Any]
     feature_tokens: dict[str, list[dict[str, Any]]]
     mean_act_squared: list[float]
     feature_metrics_map: dict[int, dict[str, float]]
     headline_features: list[dict[str, Any]]
+    baseline_headline_features: list[dict[str, Any]] | None
 
     @classmethod
     def load(cls, repo_root: Path, run_id: int | None = None) -> "FeatureProbeData":
@@ -50,6 +52,12 @@ class FeatureProbeData:
         else:
             run_path = get_latest_run(analysis_dir)
         print(f"[feature_probe_server] Using run: {run_path}")
+
+        metadata_path = run_path / "metadata.json"
+        run_metadata: dict[str, Any] = {}
+        if metadata_path.exists():
+            with open(metadata_path, "r", encoding="utf-8") as f:
+                run_metadata = json.load(f)
 
         summary_path = run_path / "feature_stats.json"
         if not summary_path.exists():
@@ -90,13 +98,21 @@ class FeatureProbeData:
         else:
             print("[feature_probe_server] Warning: headline_features.json not found; headline view will be empty.")
 
+        baseline_headlines_path = run_path / "headline_features_baseline.json"
+        baseline_headline_features: list[dict[str, Any]] | None = None
+        if baseline_headlines_path.exists():
+            with open(baseline_headlines_path, "r", encoding="utf-8") as f:
+                baseline_headline_features = json.load(f)
+
         return cls(
             run_path=run_path,
+            run_metadata=run_metadata,
             feature_stats=feature_stats,
             feature_tokens=feature_tokens,
             mean_act_squared=feature_stats.get("mean_act_squared", []),
             feature_metrics_map=feature_metrics_map,
             headline_features=headline_features,
+            baseline_headline_features=baseline_headline_features,
         )
 
     @property
@@ -140,9 +156,32 @@ class FeatureProbeData:
         except ValueError:
             return None
 
-    def get_headlines(self, limit: int = 100) -> list[dict[str, Any]]:
-        limit = max(1, min(limit, len(self.headline_features)))
-        return self.headline_features[:limit]
+    @property
+    def is_ablation_run(self) -> bool:
+        return self.run_metadata.get("ablation_mode") is not None
+
+    @property
+    def has_baseline_headlines(self) -> bool:
+        return self.baseline_headline_features is not None
+
+    def get_headlines(self, limit: int = 100, variant: str = "ablated") -> list[dict[str, Any]]:
+        variant = (variant or "ablated").lower()
+        if variant not in ("baseline", "ablated"):
+            raise ValueError("variant must be either 'baseline' or 'ablated'")
+
+        if variant == "baseline":
+            if self.is_ablation_run:
+                source = self.baseline_headline_features or []
+            else:
+                # Non-ablation runs only have one headline file; treat it as baseline.
+                source = self.headline_features
+        else:
+            source = self.headline_features
+
+        if not source:
+            return []
+        limit = max(1, min(limit, len(source)))
+        return source[:limit]
 
     def get_top_features(
         self, limit: int = 50, metric_name: str = "mean_activation"
@@ -283,8 +322,9 @@ class FeatureProbeRequestHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/headlines":
             params = parse_qs(parsed.query)
             limit = int(params.get("limit", ["100"])[0])
+            variant = params.get("variant", ["ablated"])[0]
             try:
-                headlines = self.data_store.get_headlines(limit)
+                headlines = self.data_store.get_headlines(limit, variant=variant)
                 self._send_json({"headlines": headlines})
             except Exception as exc:  # noqa: BLE001
                 self._send_json({"error": str(exc)}, status=400)
@@ -299,11 +339,20 @@ class FeatureProbeRequestHandler(SimpleHTTPRequestHandler):
                     metadata.setdefault("run_name", self.data_store.run_name)
                     if self.data_store.run_id is not None:
                         metadata.setdefault("run_id", self.data_store.run_id)
+                    metadata.setdefault("has_baseline_headlines", self.data_store.has_baseline_headlines)
+                    if self.data_store.is_ablation_run:
+                        metadata.setdefault(
+                            "ablated_accuracy",
+                            metadata.get("accuracy", self.data_store.accuracy),
+                        )
+                        if "baseline_accuracy" in metadata:
+                            metadata["baseline_accuracy"] = float(metadata["baseline_accuracy"])
                     self._send_json({"metadata": metadata})
                 else:
                     metadata = {"run_name": self.data_store.run_name}
                     if self.data_store.run_id is not None:
                         metadata["run_id"] = self.data_store.run_id
+                    metadata["has_baseline_headlines"] = self.data_store.has_baseline_headlines
                     self._send_json({"metadata": metadata})
             except Exception as exc:  # noqa: BLE001
                 self._send_json({"error": str(exc)}, status=400)

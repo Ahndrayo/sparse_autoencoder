@@ -31,7 +31,7 @@ export default function AblationView({ onFeatureClick, accuracy, numSamples }: P
     let cancelled = false;
     setLoading(true);
     setError(null);
-    fetchHeadlines(limit)
+    fetchHeadlines(limit, "ablated")
       .then((data) => {
         if (cancelled) return;
         const rawHeadlines = data.headlines || [];
