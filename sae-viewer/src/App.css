@@ -472,6 +472,23 @@ p { whitespace: nowrap; }
   overflow-wrap: anywhere;
 }
 
+.prompt-view-controls {
+  margin: 0.5rem 0 1rem;
+  align-items: center;
+}
+
+.prompt-view-label {
+  font-size: 0.85rem;
+  color: #4b5563;
+  margin-right: 0.25rem;
+}
+
+.prompt-view-hint {
+  font-size: 0.8rem;
+  color: #6b7280;
+  margin-left: 0.25rem;
+}
+
 @media (max-width: 960px) {
   .app-shell {
     grid-template-columns: 1fr;
