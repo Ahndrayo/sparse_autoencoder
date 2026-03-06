@@ -489,6 +489,22 @@ p { whitespace: nowrap; }
   margin-left: 0.25rem;
 }
 
+.prompt-tooltip-content {
+  color: #111827;
+  font-size: 0.9rem;
+}
+
+.prompt-tooltip-label {
+  font-weight: 700;
+  margin-bottom: 0.4rem;
+  color: #374151;
+}
+
+.prompt-tooltip-tokenized {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 960px) {
   .app-shell {
     grid-template-columns: 1fr;

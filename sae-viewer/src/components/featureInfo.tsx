@@ -38,6 +38,15 @@ export default ({ feature }: { feature: Feature }) => {
     return <span>{(sequence as any).prompt_snippet || "-"}</span>;
   };
 
+  const promptTooltipStyle: React.CSSProperties = {
+    maxWidth: "720px",
+    minWidth: "380px",
+    padding: "12px 14px",
+    lineHeight: 1.45,
+    zIndex: 3000,
+    boxShadow: "0 6px 18px rgba(0, 0, 0, 0.2)",
+  };
+
   const renderTokenizedPrompt = (sequence: SequenceInfo) => {
     const allTokens: string[] = (sequence as any).prompt_tokens || [];
     if (!allTokens.length) {
@@ -280,9 +289,22 @@ export default ({ feature }: { feature: Feature }) => {
                     </td>
                     <td className="prompt-cell p-2">
                       <div className="prompt-inline">
-                        {promptRenderMode === "tokenized"
-                          ? renderTokenizedPrompt(sequence)
-                          : renderOriginalPrompt(sequence)}
+                        {promptRenderMode === "tokenized" ? (
+                          renderTokenizedPrompt(sequence)
+                        ) : (
+                          <Tooltip
+                            content={<span>{renderOriginalPrompt(sequence)}</span>}
+                            tooltip={
+                              <div className="prompt-tooltip-content">
+                                <div className="prompt-tooltip-label">Tokenized (Exact)</div>
+                                <div className="prompt-tooltip-tokenized">
+                                  {renderTokenizedPrompt(sequence)}
+                                </div>
+                              </div>
+                            }
+                            tooltipStyle={promptTooltipStyle}
+                          />
+                        )}
                       </div>
                     </td>
                     <td className="p-2">
