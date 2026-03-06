@@ -87,7 +87,7 @@ function App() {
             className={activeTab === "headlines" ? "active" : ""}
             onClick={() => setActiveTab("headlines")}
           >
-            Headlines
+            Unablated
           </button>
           <button
             className={activeTab === "ablation" ? "active" : ""}
@@ -99,7 +99,7 @@ function App() {
               cursor: hasAblationData ? "pointer" : "not-allowed",
             }}
           >
-            Ablation
+            Ablated
           </button>
           <button
             className={activeTab === "features" ? "active" : ""}

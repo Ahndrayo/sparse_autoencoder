@@ -107,7 +107,7 @@ export default function HeadlinesView({
   return (
     <div className="headlines-view">
       <header className="headlines-header">
-        <h1>Headlines</h1>
+        <h1>Unablated</h1>
         {accuracy !== null && accuracy !== undefined && (
           <p className="accuracy-display">
             <strong>Model Accuracy:</strong>{" "}

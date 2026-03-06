@@ -112,7 +112,7 @@ export default function AblationView({ onFeatureClick, accuracy, numSamples }: P
   return (
     <div className="headlines-view">
       <header className="headlines-header">
-        <h1>Ablation</h1>
+        <h1>Ablated</h1>
         {accuracy !== null && accuracy !== undefined && (
           <p className="accuracy-display">
             <strong>Model Accuracy:</strong>{" "}
