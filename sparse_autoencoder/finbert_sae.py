@@ -50,7 +50,7 @@ class SparseAutoencoder(nn.Module):
             return self.encode(x)
 
 
-def load_sae(layer: int = 8, latent_size: str = "32k", device: torch.device = None):
+def load_sae(layer: int = 8, latent_size: str = "32k", device: torch.device = None, file_name: str = None):
     """
     Load a trained SAE model.
     
@@ -66,7 +66,12 @@ def load_sae(layer: int = 8, latent_size: str = "32k", device: torch.device = No
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
-    sae_path = f"./finbert_sae/layer_{layer}_{latent_size}.pt"
+
+    if file_name is None:
+        file_name = f"./layer_{layer+1}_{latent_size}.pt"
+    else:
+        file_name = f"{file_name}"
+    sae_path = f"./finbert_sae/{file_name}"
     
     # Load checkpoint
     checkpoint = torch.load(sae_path, map_location=device)
@@ -85,7 +90,7 @@ def load_sae(layer: int = 8, latent_size: str = "32k", device: torch.device = No
     sae.eval()
     
     print(f"✓ Loaded SAE from {sae_path}")
-    print(f"  Layer: {config['layer']}")
+    print(f"  Layer: {config['layer'] + 1}")
     print(f"  Input dim: {config['input_dim']}")
     print(f"  Latent dim: {config['latent_dim']}")
     
