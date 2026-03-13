@@ -472,6 +472,39 @@ p { whitespace: nowrap; }
   overflow-wrap: anywhere;
 }
 
+.prompt-view-controls {
+  margin: 0.5rem 0 1rem;
+  align-items: center;
+}
+
+.prompt-view-label {
+  font-size: 0.85rem;
+  color: #4b5563;
+  margin-right: 0.25rem;
+}
+
+.prompt-view-hint {
+  font-size: 0.8rem;
+  color: #6b7280;
+  margin-left: 0.25rem;
+}
+
+.prompt-tooltip-content {
+  color: #111827;
+  font-size: 0.9rem;
+}
+
+.prompt-tooltip-label {
+  font-weight: 700;
+  margin-bottom: 0.4rem;
+  color: #374151;
+}
+
+.prompt-tooltip-tokenized {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 960px) {
   .app-shell {
     grid-template-columns: 1fr;

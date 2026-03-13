@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+﻿import React, { useEffect, useMemo, useState } from "react";
 import { fetchHeadlines } from "../interpAPI";
 import { HeadlineInfo } from "../types";
 
@@ -6,6 +6,8 @@ type Props = {
   onFeatureClick?: (featureId: number) => void;
   accuracy?: number | null;
   numSamples?: number | null;
+  isAblationRun?: boolean;
+  hasBaselineHeadlines?: boolean;
 };
 
 type SortKey =
@@ -15,7 +17,13 @@ type SortKey =
   | "true_label"
   | "prompt";
 
-export default function HeadlinesView({ onFeatureClick, accuracy, numSamples }: Props) {
+export default function HeadlinesView({
+  onFeatureClick,
+  accuracy,
+  numSamples,
+  isAblationRun = false,
+  hasBaselineHeadlines = true,
+}: Props) {
   const [headlines, setHeadlines] = useState<HeadlineInfo[]>([]);
   const [limit, setLimit] = useState(100);
   const [loading, setLoading] = useState(false);
@@ -25,10 +33,17 @@ export default function HeadlinesView({ onFeatureClick, accuracy, numSamples }: 
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
   useEffect(() => {
+    if (isAblationRun && !hasBaselineHeadlines) {
+      setHeadlines([]);
+      setLoading(false);
+      setError(null);
+      return;
+    }
+
     let cancelled = false;
     setLoading(true);
     setError(null);
-    fetchHeadlines(limit)
+    fetchHeadlines(limit, "baseline")
       .then((data) => {
         if (cancelled) return;
         setHeadlines(data.headlines || []);
@@ -43,7 +58,7 @@ export default function HeadlinesView({ onFeatureClick, accuracy, numSamples }: 
     return () => {
       cancelled = true;
     };
-  }, [limit]);
+  }, [hasBaselineHeadlines, isAblationRun, limit]);
 
   const toggleExpand = (rowId: number) => {
     setExpanded((prev) => ({ ...prev, [rowId]: !prev[rowId] }));
@@ -92,7 +107,7 @@ export default function HeadlinesView({ onFeatureClick, accuracy, numSamples }: 
   return (
     <div className="headlines-view">
       <header className="headlines-header">
-        <h1>Headlines</h1>
+        <h1>Unablated</h1>
         {accuracy !== null && accuracy !== undefined && (
           <p className="accuracy-display">
             <strong>Model Accuracy:</strong>{" "}
@@ -116,10 +131,16 @@ export default function HeadlinesView({ onFeatureClick, accuracy, numSamples }: 
         </div>
       </header>
 
-      {loading && <div>Loading headlines…</div>}
+      {loading && <div>Loading headlines...</div>}
       {error && <div className="error-message">{error}</div>}
+      {!loading && !error && isAblationRun && !hasBaselineHeadlines && (
+        <div className="no-ablation-data">
+          Baseline headlines were not exported for this ablation run. Regenerate
+          this run with baseline export enabled to populate the Headlines tab.
+        </div>
+      )}
 
-      {!loading && !error && (
+      {!loading && !error && (!isAblationRun || hasBaselineHeadlines) && (
         <div className="headlines-table-wrapper">
           <table className="feature-table">
             <thead>
@@ -152,7 +173,7 @@ export default function HeadlinesView({ onFeatureClick, accuracy, numSamples }: 
                     <td className="center">
                       {h.confidence !== undefined
                         ? `${(h.confidence * 100).toFixed(1)}%`
-                        : "—"}
+                        : "-"}
                     </td>
                     <td className="center">{h.true_label}</td>
                     <td style={{ maxWidth: "360px" }}>
@@ -165,7 +186,7 @@ export default function HeadlinesView({ onFeatureClick, accuracy, numSamples }: 
                             key={f.feature_id}
                             className="feature-chip"
                             onClick={() => onFeatureClick?.(f.feature_id)}
-                            title={`Activation: ${f.max_activation?.toFixed(3) ?? "—"}`}
+                            title={`Activation: ${f.max_activation?.toFixed(3) ?? "-"}`}
                           >
                             {f.feature_id}: {f.token_str}
                           </button>
@@ -190,4 +211,3 @@ export default function HeadlinesView({ onFeatureClick, accuracy, numSamples }: 
     </div>
   );
 }
-

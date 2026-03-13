@@ -25,7 +25,7 @@ export type TokenSequence = TokenAndActivation[]
 export type SequenceInfo = {
   density: number,
   doc_id: number,
-  idx: number, // which act this document was selected for
+  idx: number, // activation token index; aligns with prompt_tokens payload used by Prompt token highlight view
   acts: number[],
   act: number,
   tokens: string[],

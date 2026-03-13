@@ -49,12 +49,14 @@ export async function get_feature_info(
 }
 
 export async function fetchHeadlines(
-  limit: number = 100
+  limit: number = 100,
+  variant: "baseline" | "ablated" = "ablated"
 ): Promise<{
   headlines: any[];
 }> {
   const url = new URL(`${API_BASE}/api/headlines`);
   url.searchParams.set("limit", String(limit));
+  url.searchParams.set("variant", variant);
   const res = await fetch(url.toString(), {
     headers: {
       "Accept": "application/json",
@@ -70,6 +72,9 @@ export async function fetchMetadata(): Promise<{
   metadata: {
     ablated_features?: number[];
     accuracy?: number;
+    baseline_accuracy?: number;
+    ablated_accuracy?: number;
+    has_baseline_headlines?: boolean;
     num_samples?: number;
     run_id?: number;
     run_name?: string;
