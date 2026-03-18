@@ -2,7 +2,7 @@
 
 import numpy as np
 import torch
-from typing import Any, List, Dict, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 
 def create_intervention_hook(sae, features_to_ablate: List[int], device, current_sample_data: Dict = None):
@@ -117,6 +117,7 @@ def run_baseline_inference(
     layer_to_extract: int,
     max_samples: int,
     max_seq_length: int,
+    interpretability_recorder=None,
 ) -> Tuple[List[Dict], Dict, float, List[Dict[str, Any]]]:
     """Run baseline inference without ablation."""
     baseline_results = []
@@ -229,6 +230,8 @@ def run_baseline_inference(
                             "features": baseline_headline_features,
                         }
                     )
+                    if interpretability_recorder is not None:
+                        interpretability_recorder.update(sae_features_cpu, filtered_prompt_tokens)
                 else:
                     baseline_features_map[idx] = {"top_features": [], "total_activation": 0.0}
                     baseline_headlines.append(
