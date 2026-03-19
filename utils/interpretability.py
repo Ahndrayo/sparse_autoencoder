@@ -164,7 +164,7 @@ class SAEInterpretabilityEvaluator:
         snippets: List[str],
         top_token: str,
         exclude: set,
-        n_target: int = 60,
+        n_target: int = 20,
     ) -> List[int]:
         """Hold-out set disjoint from explain indices when possible."""
         n = len(acts)
