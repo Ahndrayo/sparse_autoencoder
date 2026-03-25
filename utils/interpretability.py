@@ -3,12 +3,18 @@
 import json
 import random
 import re
+import warnings
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import ollama
 from scipy.stats import spearmanr
+
+try:
+    from scipy.stats import ConstantInputWarning
+except ImportError:  # older scipy
+    ConstantInputWarning = type("ConstantInputWarning", (UserWarning,), {})
 
 DEFAULT_EXPLAIN_PROMPT = """You are a financial interpretability researcher.
 Below are snippets where a specific internal feature of a finance model activates.
@@ -38,6 +44,33 @@ TASK: For each snippet in order, output exactly one line per snippet:
 Score: [X]
 where X is a single digit 0-9. Do not skip any snippet. No other scores on each line.
 """
+
+
+def _spearman_or_none(
+    predicted: Sequence[int], true: Sequence[int]
+) -> Tuple[Optional[float], Optional[str]]:
+    """
+    Spearman ρ is undefined if either series is constant (all tied ranks).
+    Returns (rho, None) on success, or (None, reason) when ρ cannot be defined.
+    """
+    pred_arr = np.asarray(predicted, dtype=np.float64)
+    true_arr = np.asarray(true, dtype=np.float64)
+    n = pred_arr.size
+    if n < 2:
+        return None, "need at least 2 evaluation snippets"
+    if np.ptp(pred_arr) == 0 and np.ptp(true_arr) == 0:
+        return None, "constant predictions and constant ground truth (no rank variation)"
+    if np.ptp(pred_arr) == 0:
+        return None, "constant model predictions (e.g. same score for every snippet)"
+    if np.ptp(true_arr) == 0:
+        return None, "constant ground-truth scores (often all 0 after quantization on weak features)"
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", ConstantInputWarning)
+        rho, _ = spearmanr(pred_arr, true_arr)
+    if rho is None or (isinstance(rho, float) and rho != rho):
+        return None, "Spearman undefined for this pair (degenerate ranks)"
+    return float(rho), None
 
 
 def _strip_thinking(text: str) -> str:
@@ -240,15 +273,18 @@ class SAEInterpretabilityEvaluator:
                 "raw_eval_response": raw[:2000],
             }
 
-        correlation, _ = spearmanr(predicted_scores, true_scores)
-        return {
+        correlation, corr_note = _spearman_or_none(predicted_scores, true_scores)
+        out: Dict[str, Any] = {
             "feature_id": key,
             "explanation": explanation,
-            "correlation": float(correlation) if correlation == correlation else None,
+            "correlation": correlation,
             "n_eval": len(true_scores),
             "predicted_scores": predicted_scores,
             "true_scores": true_scores,
         }
+        if corr_note is not None:
+            out["correlation_note"] = corr_note
+        return out
 
     def run_features(
         self,
