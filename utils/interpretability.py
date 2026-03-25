@@ -169,8 +169,20 @@ class SAEInterpretabilityEvaluator:
         return indices
 
     def _call_llm(self, prompt: str) -> str:
+        """Return cleaned response only (backwards compatible)."""
+        _, cleaned = self._call_llm_raw_and_cleaned(prompt)
+        return cleaned
+
+    def _call_llm_raw_and_cleaned(self, prompt: str) -> Tuple[str, str]:
+        """Return (raw_response, cleaned_response).
+
+        raw_response is the full `ollama.generate(...).response` string.
+        cleaned_response is the string with <think>...</think> removed.
+        """
         response = ollama.generate(model=self.model, prompt=prompt)
-        return _strip_thinking(response.get("response", "") or "")
+        raw = response.get("response", "") or ""
+        cleaned = _strip_thinking(raw)
+        return raw, cleaned
 
     @staticmethod
     def _parse_scores(text: str) -> List[int]:
@@ -234,10 +246,22 @@ class SAEInterpretabilityEvaluator:
         top_token = feat.get("top_token_str") or ""
 
         expl_idx = self._explain_indices(acts, snippets, top_token)
-        expl_lines = [f"Score: {self.quantize(acts[i], max_act)} | Text: {snippets[i]}" for i in expl_idx]
+        explanation_examples: List[Dict[str, Any]] = [
+            {
+                "example_index": int(i),
+                "activation": float(acts[i]),
+                "quantized_score": int(self.quantize(float(acts[i]), max_act)),
+                "snippet": snippets[i],
+            }
+            for i in expl_idx
+        ]
+        expl_lines = [
+            f"Score: {ex['quantized_score']} | Text: {ex['snippet']}" for ex in explanation_examples
+        ]
         examples_block = "\n".join(expl_lines)
         prompt_1 = self.explain_prompt_template.format(examples=examples_block)
-        explanation = self._call_llm(prompt_1).strip()
+        raw_response_explanation, cleaned_response_explanation = self._call_llm_raw_and_cleaned(prompt_1)
+        explanation = cleaned_response_explanation.strip()
 
         if "UNINTERPRETABLE" in explanation.upper():
             return {
@@ -245,6 +269,11 @@ class SAEInterpretabilityEvaluator:
                 "explanation": explanation,
                 "correlation": None,
                 "skipped": True,
+                "explanation_prompt_1": prompt_1,
+                "raw_response_explanation": raw_response_explanation,
+                "cleaned_response_explanation": cleaned_response_explanation,
+                "expl_idx": [int(i) for i in expl_idx],
+                "explanation_examples": explanation_examples,
             }
 
         pred_idx = self._prediction_indices(acts, snippets, top_token, set(expl_idx))
@@ -254,13 +283,31 @@ class SAEInterpretabilityEvaluator:
                 "explanation": explanation,
                 "correlation": None,
                 "error": "No prediction indices available",
+                "explanation_prompt_1": prompt_1,
+                "raw_response_explanation": raw_response_explanation,
+                "cleaned_response_explanation": cleaned_response_explanation,
+                "expl_idx": [int(i) for i in expl_idx],
+                "explanation_examples": explanation_examples,
+                "pred_idx": [],
+                "evaluation_prompt_2": None,
+                "raw_response_eval": None,
+                "evaluation_examples": [],
             }
 
-        true_scores = [self.quantize(acts[i], max_act) for i in pred_idx]
+        evaluation_examples: List[Dict[str, Any]] = [
+            {
+                "example_index": int(i),
+                "activation": float(acts[i]),
+                "quantized_true_score": int(self.quantize(float(acts[i]), max_act)),
+                "snippet": snippets[i],
+            }
+            for i in pred_idx
+        ]
+        true_scores = [ex["quantized_true_score"] for ex in evaluation_examples]
         numbered = "\n".join(f"[{k + 1}] {snippets[i]}" for k, i in enumerate(pred_idx))
         prompt_2 = self.eval_prompt_template.format(explanation=explanation, snippets_block=numbered)
-        raw = self._call_llm(prompt_2)
-        predicted_scores = self._parse_scores(raw)
+        raw_response_eval, cleaned_response_eval = self._call_llm_raw_and_cleaned(prompt_2)
+        predicted_scores = self._parse_scores(cleaned_response_eval)
 
         if len(predicted_scores) >= len(true_scores):
             predicted_scores = predicted_scores[: len(true_scores)]
@@ -270,15 +317,55 @@ class SAEInterpretabilityEvaluator:
                 "explanation": explanation,
                 "correlation": None,
                 "error": f"Too few scores: got {len(predicted_scores)}, need {len(true_scores)}",
-                "raw_eval_response": raw[:2000],
+                "explanation_prompt_1": prompt_1,
+                "raw_response_explanation": raw_response_explanation,
+                "cleaned_response_explanation": cleaned_response_explanation,
+                "expl_idx": [int(i) for i in expl_idx],
+                "explanation_examples": explanation_examples,
+                "pred_idx": [int(i) for i in pred_idx],
+                "evaluation_prompt_2": prompt_2,
+                "raw_response_eval": raw_response_eval,
+                "cleaned_response_eval": cleaned_response_eval,
+                "evaluation_examples": [
+                    {
+                        **ex,
+                        "predicted_score": int(predicted_scores[k])
+                        if k < len(predicted_scores)
+                        else None,
+                    }
+                    for k, ex in enumerate(evaluation_examples)
+                ],
+                "raw_eval_response": raw_response_eval[:2000],
+                "true_scores": true_scores,
+                "predicted_scores": predicted_scores,
             }
 
         correlation, corr_note = _spearman_or_none(predicted_scores, true_scores)
+        evaluation_examples_with_pred: List[Dict[str, Any]] = []
+        for k, ex in enumerate(evaluation_examples):
+            evaluation_examples_with_pred.append(
+                {
+                    **ex,
+                    "predicted_score": int(predicted_scores[k])
+                    if k < len(predicted_scores)
+                    else None,
+                }
+            )
         out: Dict[str, Any] = {
             "feature_id": key,
             "explanation": explanation,
+            "explanation_prompt_1": prompt_1,
+            "raw_response_explanation": raw_response_explanation,
+            "cleaned_response_explanation": cleaned_response_explanation,
+            "expl_idx": [int(i) for i in expl_idx],
+            "explanation_examples": explanation_examples,
             "correlation": correlation,
             "n_eval": len(true_scores),
+            "evaluation_prompt_2": prompt_2,
+            "raw_response_eval": raw_response_eval,
+            "cleaned_response_eval": cleaned_response_eval,
+            "pred_idx": [int(i) for i in pred_idx],
+            "evaluation_examples": evaluation_examples_with_pred,
             "predicted_scores": predicted_scores,
             "true_scores": true_scores,
         }
