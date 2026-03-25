@@ -96,3 +96,36 @@ export async function fetchMetadata(): Promise<{
   }
   return res.json();
 }
+
+// interpretability endpoints (LLM explanation + evaluation)
+export async function fetchInterpretabilityFeatures(): Promise<{
+  features: Array<{
+    feature_id: number | string;
+    correlation?: number | null;
+    n_eval?: number | null;
+    skipped?: boolean;
+    error?: string;
+  }>;
+  has_results: boolean;
+}> {
+  const url = new URL(`${API_BASE}/api/interpretability/features`);
+  const res = await fetch(url.toString(), {
+    headers: { Accept: "application/json" },
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to load interpretability features: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchInterpretabilityFeature(featureId: number | string): Promise<any> {
+  const url = new URL(`${API_BASE}/api/interpretability/feature`);
+  url.searchParams.set("id", String(featureId));
+  const res = await fetch(url.toString(), {
+    headers: { Accept: "application/json" },
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to load interpretability feature: ${res.statusText}`);
+  }
+  return res.json();
+}

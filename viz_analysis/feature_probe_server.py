@@ -47,6 +47,8 @@ class FeatureProbeData:
     feature_metrics_map_baseline: dict[int, dict[str, float]]
     headline_features: list[dict[str, Any]]
     baseline_headline_features: list[dict[str, Any]] | None
+    interpretability_results: list[dict[str, Any]]
+    interpretability_by_feature: dict[str, dict[str, Any]]
 
     @classmethod
     def load(cls, repo_root: Path, run_id: int | None = None) -> "FeatureProbeData":
@@ -178,6 +180,34 @@ class FeatureProbeData:
             with open(baseline_headlines_path, "r", encoding="utf-8") as f:
                 baseline_headline_features = json.load(f)
 
+        interpretability_path = run_path / "interpretability_llm_results.json"
+        interpretability_results: list[dict[str, Any]] = []
+        interpretability_by_feature: dict[str, dict[str, Any]] = {}
+        if interpretability_path.exists():
+            try:
+                with open(interpretability_path, "r", encoding="utf-8") as f:
+                    loaded = json.load(f)
+                if isinstance(loaded, list):
+                    interpretability_results = [
+                        d for d in loaded if isinstance(d, dict)
+                    ]
+                elif isinstance(loaded, dict):
+                    # Be tolerant: some runs may serialize results as a dict.
+                    interpretability_results = [
+                        d for d in loaded.values() if isinstance(d, dict)
+                    ]
+            except Exception as exc:  # noqa: BLE001
+                print(
+                    f"[feature_probe_server] Warning: failed to load "
+                    f"{interpretability_path.name}: {exc}"
+                )
+
+        for entry in interpretability_results:
+            fid = entry.get("feature_id")
+            if fid is None:
+                continue
+            interpretability_by_feature[str(fid)] = entry
+
         return cls(
             run_path=run_path,
             run_metadata=run_metadata,
@@ -191,6 +221,8 @@ class FeatureProbeData:
             feature_metrics_map_baseline=feature_metrics_map_baseline,
             headline_features=headline_features,
             baseline_headline_features=baseline_headline_features,
+            interpretability_results=interpretability_results,
+            interpretability_by_feature=interpretability_by_feature,
         )
 
     @property
@@ -524,6 +556,48 @@ class FeatureProbeRequestHandler(SimpleHTTPRequestHandler):
                 self._send_json(data)
             except Exception as exc:  # noqa: BLE001
                 self._send_json({"error": str(exc)}, status=400)
+            return
+
+        if parsed.path == "/api/interpretability/features":
+            features_out: list[dict[str, Any]] = []
+            for entry in self.data_store.interpretability_results:
+                fid = entry.get("feature_id")
+                try:
+                    fid_int = int(fid)
+                except Exception:  # noqa: BLE001
+                    fid_int = fid
+                features_out.append(
+                    {
+                        "feature_id": fid_int,
+                        "correlation": entry.get("correlation"),
+                        "n_eval": entry.get("n_eval"),
+                        "skipped": entry.get("skipped", False),
+                        "error": entry.get("error"),
+                    }
+                )
+            self._send_json(
+                {
+                    "features": features_out,
+                    "has_results": bool(features_out),
+                }
+            )
+            return
+
+        if parsed.path == "/api/interpretability/feature":
+            params = parse_qs(parsed.query)
+            feature_id = params.get("id")
+            if feature_id is None:
+                self._send_json({"error": "Missing 'id' query parameter"}, status=400)
+                return
+            key = str(feature_id[0])
+            entry = self.data_store.interpretability_by_feature.get(key)
+            if entry is None:
+                self._send_json(
+                    {"error": f"No interpretability results for feature {key}"},
+                    status=404,
+                )
+                return
+            self._send_json(entry)
             return
 
         if parsed.path in ("", "/"):
