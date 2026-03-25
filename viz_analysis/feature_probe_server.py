@@ -38,9 +38,13 @@ class FeatureProbeData:
     run_path: Path
     run_metadata: dict[str, Any]
     feature_stats: dict[str, Any]
+    feature_stats_baseline: dict[str, Any] | None
     feature_tokens: dict[str, list[dict[str, Any]]]
+    feature_tokens_baseline: dict[str, list[dict[str, Any]]]
     mean_act_squared: list[float]
+    mean_act_squared_baseline: list[float]
     feature_metrics_map: dict[int, dict[str, float]]
+    feature_metrics_map_baseline: dict[int, dict[str, float]]
     headline_features: list[dict[str, Any]]
     baseline_headline_features: list[dict[str, Any]] | None
 
@@ -79,12 +83,59 @@ class FeatureProbeData:
                 "token lookups will be unavailable."
             )
 
-        feature_metrics_map: dict[int, dict[str, float]] = {}
+        tokens_baseline_path = run_path / "feature_tokens_baseline.json"
+        feature_tokens_baseline: dict[str, list[dict[str, Any]]] = {}
+        if tokens_baseline_path.exists():
+            with open(tokens_baseline_path, "r", encoding="utf-8") as f:
+                token_payload_b = json.load(f)
+            feature_tokens_baseline = token_payload_b.get("features", {})
+        else:
+            print(
+                "[feature_probe_server] Info: feature_tokens_baseline.json not found; "
+                "baseline token examples unavailable (re-run notebook save cell)."
+            )
+
+        stats_baseline_path = run_path / "feature_stats_baseline.json"
+        feature_stats_baseline: dict[str, Any] | None = None
+        if stats_baseline_path.exists():
+            with open(stats_baseline_path, "r", encoding="utf-8") as f:
+                feature_stats_baseline = json.load(f)
+
+        def build_metrics_map(fs: dict[str, Any]) -> dict[int, dict[str, float]]:
+            m: dict[int, dict[str, float]] = {}
+            num_f = int(fs.get("num_features", 0))
+            ma = fs.get("mean_activation")
+            xa = fs.get("max_activation")
+            fa = fs.get("fraction_active")
+            if (
+                num_f > 0
+                and isinstance(ma, list)
+                and isinstance(xa, list)
+                and isinstance(fa, list)
+                and len(ma) == num_f
+                and len(xa) == num_f
+                and len(fa) == num_f
+            ):
+                return {
+                    i: {
+                        "mean_activation": float(ma[i]),
+                        "max_activation": float(xa[i]),
+                        "fraction_active": float(fa[i]),
+                    }
+                    for i in range(num_f)
+                }
+            for metric_block in fs.get("metrics", {}).values():
+                for entry in metric_block.get("top_features", []):
+                    fid = int(entry["feature_id"])
+                    m.setdefault(fid, entry.get("metrics", {}))
+            return m
+
+        feature_metrics_map = build_metrics_map(feature_stats)
         num_features = int(feature_stats.get("num_features", 0))
         mean_activation = feature_stats.get("mean_activation")
         max_activation = feature_stats.get("max_activation")
         fraction_active = feature_stats.get("fraction_active")
-        if (
+        if not (
             num_features > 0
             and isinstance(mean_activation, list)
             and isinstance(max_activation, list)
@@ -93,21 +144,20 @@ class FeatureProbeData:
             and len(max_activation) == num_features
             and len(fraction_active) == num_features
         ):
-            # New format: explicit scalar metrics for *all* feature IDs.
-            feature_metrics_map = {
-                fid: {
-                    "mean_activation": float(mean_activation[fid]),
-                    "max_activation": float(max_activation[fid]),
-                    "fraction_active": float(fraction_active[fid]),
-                }
-                for fid in range(num_features)
-            }
-        else:
-            # Legacy format: only store metrics for "top features" per metric.
-            for metric_block in feature_stats.get("metrics", {}).values():
-                for entry in metric_block.get("top_features", []):
-                    fid = int(entry["feature_id"])
-                    feature_metrics_map.setdefault(fid, entry.get("metrics", {}))
+            print(
+                "[feature_probe_server] Warning: feature_stats.json does not include full "
+                "mean_activation/max_activation/fraction_active arrays. "
+                "Only features present in metrics.*.top_features will have metric snapshots. "
+                "Re-run the notebook Save Results cell to regenerate this run."
+            )
+
+        feature_metrics_map_baseline: dict[int, dict[str, float]] = {}
+        if feature_stats_baseline is not None:
+            feature_metrics_map_baseline = build_metrics_map(feature_stats_baseline)
+        mean_act_squared_baseline: list[float] = []
+        if feature_stats_baseline is not None:
+            mas = feature_stats_baseline.get("mean_act_squared", [])
+            mean_act_squared_baseline = mas if isinstance(mas, list) else []
         metric_names = feature_stats.get("metrics", {}).keys()
         print(
             "[feature_probe_server] Loaded metrics:",
@@ -132,9 +182,13 @@ class FeatureProbeData:
             run_path=run_path,
             run_metadata=run_metadata,
             feature_stats=feature_stats,
+            feature_stats_baseline=feature_stats_baseline,
             feature_tokens=feature_tokens,
+            feature_tokens_baseline=feature_tokens_baseline,
             mean_act_squared=feature_stats.get("mean_act_squared", []),
+            mean_act_squared_baseline=mean_act_squared_baseline,
             feature_metrics_map=feature_metrics_map,
+            feature_metrics_map_baseline=feature_metrics_map_baseline,
             headline_features=headline_features,
             baseline_headline_features=baseline_headline_features,
         )
@@ -221,23 +275,34 @@ class FeatureProbeData:
         limit = max(1, min(limit, len(top_features)))
         return top_features[:limit]
 
-    def get_feature_tokens(self, feature_id: int, top_k: int = 10) -> dict[str, Any]:
+    def get_feature_tokens(
+        self, feature_id: int, top_k: int = 10, variant: str = "ablated"
+    ) -> dict[str, Any]:
+        variant = (variant or "ablated").lower()
+        tokens_dict = (
+            self.feature_tokens_baseline if variant == "baseline" else self.feature_tokens
+        )
         feature_key = str(feature_id)
-        tokens = self.feature_tokens.get(feature_key, [])
+        tokens = tokens_dict.get(feature_key, [])
         if not tokens:
             raise ValueError(
-                f"No token information saved for feature {feature_id}. "
-                "Only preselected features are available."
+                f"No token information saved for feature {feature_id} (variant={variant}). "
+                "Re-run inference with full per-feature token tracking, or try the other variant."
             )
         return {
             "feature_id": feature_id,
+            "variant": variant,
             "top_k": min(top_k, len(tokens)),
             "tokens": tokens[:top_k],
         }
 
-    def _build_hist(self, feature_id: int) -> dict[str, int]:
+    def _build_hist(
+        self,
+        feature_id: int,
+        tokens_dict: dict[str, list[dict[str, Any]]],
+    ) -> dict[str, int]:
         hist: dict[str, int] = {}
-        for entry in self.feature_tokens.get(str(feature_id), []):
+        for entry in tokens_dict.get(str(feature_id), []):
             activation = entry.get("activation", 0.0)
             bin_index = int(activation // HIST_BIN_WIDTH)
             hist[str(bin_index)] = hist.get(str(bin_index), 0) + 1
@@ -263,31 +328,60 @@ class FeatureProbeData:
             "true_label": entry.get("true_label"),
         }
 
-    def get_feature_info(self, feature_id: int, top_k: int = 10) -> dict[str, Any]:
+    def get_feature_info(self, feature_id: int, top_k: int = 10, variant: str = "ablated") -> dict[str, Any]:
+        variant = (variant or "ablated").lower()
+        if variant not in ("baseline", "ablated"):
+            variant = "ablated"
+
+        tokens_dict = (
+            self.feature_tokens_baseline if variant == "baseline" else self.feature_tokens
+        )
+        if variant == "baseline" and not tokens_dict:
+            raise ValueError(
+                "No baseline token data in this run (missing feature_tokens_baseline.json). "
+                "Re-run the notebook save cell after baseline tracking is enabled."
+            )
+
+        metrics_map = (
+            self.feature_metrics_map_baseline
+            if variant == "baseline" and self.feature_stats_baseline is not None
+            else self.feature_metrics_map
+        )
+        mean_sq_vec = (
+            self.mean_act_squared_baseline
+            if variant == "baseline"
+            and self.feature_stats_baseline is not None
+            and bool(self.mean_act_squared_baseline)
+            else self.mean_act_squared
+        )
+
         if feature_id < 0 or feature_id >= self.num_features:
             raise ValueError(
                 f"feature_id {feature_id} out of range (num_features={self.num_features})"
             )
 
-        metrics = self.feature_metrics_map.get(feature_id, {})
+        metrics = metrics_map.get(feature_id, {})
         mean_act = metrics.get("mean_activation", 0.0)
         density = metrics.get("fraction_active", 0.0)
         mean_sq = (
-            self.mean_act_squared[feature_id]
-            if self.mean_act_squared and 0 <= feature_id < len(self.mean_act_squared)
+            mean_sq_vec[feature_id]
+            if mean_sq_vec and 0 <= feature_id < len(mean_sq_vec)
             else mean_act**2
         )
 
-        tokens = self.feature_tokens.get(str(feature_id), [])
+        tokens = tokens_dict.get(str(feature_id), [])
+        is_inactive = density <= 0 and len(tokens) == 0
         sequences = [self._make_sequence(entry, density) for entry in tokens]
         top_sequences = sequences[: min(top_k, len(sequences))]
         random_sequences = sequences[::-1][: min(top_k, len(sequences))]
 
         return {
+            "variant": variant,
             "density": density,
             "mean_act": mean_act,
             "mean_act_squared": mean_sq,
-            "hist": self._build_hist(feature_id),
+            "is_inactive": is_inactive,
+            "hist": self._build_hist(feature_id, tokens_dict),
             "top": top_sequences,
             "random": random_sequences,
         }
@@ -366,6 +460,14 @@ class FeatureProbeRequestHandler(SimpleHTTPRequestHandler):
                     if self.data_store.run_id is not None:
                         metadata.setdefault("run_id", self.data_store.run_id)
                     metadata.setdefault("has_baseline_headlines", self.data_store.has_baseline_headlines)
+                    metadata.setdefault(
+                        "has_feature_tokens_baseline",
+                        bool(self.data_store.feature_tokens_baseline),
+                    )
+                    metadata.setdefault(
+                        "has_feature_stats_baseline",
+                        self.data_store.feature_stats_baseline is not None,
+                    )
                     if self.data_store.is_ablation_run:
                         metadata.setdefault(
                             "ablated_accuracy",
@@ -379,6 +481,12 @@ class FeatureProbeRequestHandler(SimpleHTTPRequestHandler):
                     if self.data_store.run_id is not None:
                         metadata["run_id"] = self.data_store.run_id
                     metadata["has_baseline_headlines"] = self.data_store.has_baseline_headlines
+                    metadata["has_feature_tokens_baseline"] = bool(
+                        self.data_store.feature_tokens_baseline
+                    )
+                    metadata["has_feature_stats_baseline"] = (
+                        self.data_store.feature_stats_baseline is not None
+                    )
                     self._send_json({"metadata": metadata})
             except Exception as exc:  # noqa: BLE001
                 self._send_json({"error": str(exc)}, status=400)
@@ -391,8 +499,11 @@ class FeatureProbeRequestHandler(SimpleHTTPRequestHandler):
                 self._send_json({"error": "Missing 'id' query parameter"}, status=400)
                 return
             top_k = int(params.get("top_k", ["10"])[0])
+            variant = params.get("variant", ["ablated"])[0]
             try:
-                data = self.data_store.get_feature_tokens(int(feature_id[0]), top_k=top_k)
+                data = self.data_store.get_feature_tokens(
+                    int(feature_id[0]), top_k=top_k, variant=variant
+                )
                 self._send_json(data)
             except Exception as exc:  # noqa: BLE001
                 self._send_json({"error": str(exc)}, status=400)
@@ -405,8 +516,11 @@ class FeatureProbeRequestHandler(SimpleHTTPRequestHandler):
                 self._send_json({"error": "Missing 'id' query parameter"}, status=400)
                 return
             top_k = int(params.get("top_k", ["10"])[0])
+            variant = params.get("variant", ["ablated"])[0]
             try:
-                data = self.data_store.get_feature_info(int(feature_id[0]), top_k=top_k)
+                data = self.data_store.get_feature_info(
+                    int(feature_id[0]), top_k=top_k, variant=variant
+                )
                 self._send_json(data)
             except Exception as exc:  # noqa: BLE001
                 self._send_json({"error": str(exc)}, status=400)

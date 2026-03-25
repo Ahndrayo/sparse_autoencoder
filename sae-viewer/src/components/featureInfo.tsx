@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { normalizeSequences, Feature, FeatureInfo, SequenceInfo } from "../types";
 import TokenHeatmap from "./tokenHeatmap";
 import TokenAblationmap from "./tokenAblationmap";
@@ -11,7 +11,13 @@ const SPECIAL_TOKENS = new Set(["[CLS]", "[SEP]", "[PAD]", "[UNK]"]);
 
 type PromptMode = "original" | "tokenized";
 
-export default ({ feature }: { feature: Feature }) => {
+export default ({
+  feature,
+  tokenVariant = "ablated",
+}: {
+  feature: Feature;
+  tokenVariant?: "baseline" | "ablated";
+}) => {
   const [data, setData] = useState(null as FeatureInfo | null);
   const [showingMore, setShowingMore] = useState<Record<string, boolean>>({});
   const [renderNewlines, setRenderNewlines] = useState(false);
@@ -98,36 +104,38 @@ export default ({ feature }: { feature: Feature }) => {
   useEffect(() => {
     async function fetchData() {
       setIsLoading(true);
+      setError(null);
       try {
         currentFeatureRef.current = feature;
-        const result = await get_feature_info(feature);
+        const result = await get_feature_info(feature, false, tokenVariant);
         if (currentFeatureRef.current !== feature) {
           return;
         }
         normalizeSequences(result.top, result.random);
         result.top.sort((a, b) => b.act - a.act);
         setData(result);
-        setIsLoading(false);
-        setError(null);
       } catch (e) {
         setError(e);
+        setData(null);
+        setIsLoading(false);
+        return;
       }
       try {
-        const result = await get_feature_info(feature, true);
+        const result = await get_feature_info(feature, true, tokenVariant);
         if (currentFeatureRef.current !== feature) {
           return;
         }
         normalizeSequences(result.top, result.random);
         result.top.sort((a, b) => b.act - a.act);
         setData(result);
-        setIsLoading(false);
-        setError(null);
       } catch (e) {
         setError("Note: ablation effects data not available for this model");
+      } finally {
+        setIsLoading(false);
       }
     }
     fetchData();
-  }, [feature]);
+  }, [feature, tokenVariant]);
 
   if (isLoading) {
     return (
@@ -139,7 +147,38 @@ export default ({ feature }: { feature: Feature }) => {
     );
   }
   if (!data) {
-    throw new Error("no data. this should not happen.");
+    return (
+      <div style={{ padding: "12px" }}>
+        <div className="error-message">
+          Failed to load feature {feature.atom}.{" "}
+          {got_error ? String(got_error) : "No additional error details."}
+        </div>
+        <div style={{ fontSize: "12px", color: "#888", marginTop: "8px" }}>
+          This can happen on older runs where only the top features were saved with metrics/examples.
+          Re-run the notebook “Save Results” cell to regenerate JSON with full per-feature metrics.
+        </div>
+      </div>
+    );
+  }
+
+  const isInactiveFeature =
+    data.density <= 0 &&
+    (data.top?.length ?? 0) === 0 &&
+    (data.random?.length ?? 0) === 0;
+
+  if (isInactiveFeature) {
+    return (
+      <div style={{ padding: "12px" }}>
+        <div className="error-message">
+          Feature {feature.atom} had no positive activations for token examples (
+          {tokenVariant}).
+        </div>
+        <div style={{ fontSize: "12px", color: "#888", marginTop: "8px" }}>
+          Try switching Token examples to the other variant or selecting a different
+          feature.
+        </div>
+      </div>
+    );
   }
 
   const all_sequences = [

@@ -53,10 +53,17 @@ class FeatureTopTokenTracker:
     def update(self, token_activations: np.ndarray, token_ids: List[int], 
                prompt_idx: int, prompt_text: str, prompt_tokens: List[str],
                predicted_label: str = None, true_label: str = None):
-        """Update with tokens from one prompt."""
+        """Update with tokens from one prompt.
+
+        For each token position, we consider **every feature with positive activation**
+        (SAE latents are typically ReLU / nonnegative). That way each feature's heap
+        collects up to ``top_k`` highest-activating token occurrences **across the run**,
+        not only when the feature was in the global top-5 at that token.
+        """
         for token_pos, (act_vec, token_id) in enumerate(zip(token_activations, token_ids)):
-            top_features = np.argsort(act_vec)[-5:]
-            for feat_id in top_features:
+            feat_ids = np.flatnonzero(act_vec > 0)
+            for feat_id in feat_ids:
+                feat_id = int(feat_id)
                 activation = float(act_vec[feat_id])
                 if activation <= 0:
                     continue

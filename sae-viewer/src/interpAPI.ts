@@ -29,11 +29,13 @@ export async function fetchFeatures(
 // feature_info endpoint
 export async function get_feature_info(
   feature: Feature,
-  ablated?: boolean
+  ablated?: boolean,
+  tokenVariant: "baseline" | "ablated" = "ablated"
 ): Promise<FeatureInfo> {
   const url = new URL(`${API_BASE}/api/feature_info`);
   url.searchParams.set("id", String(feature.atom));
   url.searchParams.set("top_k", "20");
+  url.searchParams.set("variant", tokenVariant);
   if (ablated) {
     url.searchParams.set("ablated", "1");
   }
@@ -75,6 +77,8 @@ export async function fetchMetadata(): Promise<{
     baseline_accuracy?: number;
     ablated_accuracy?: number;
     has_baseline_headlines?: boolean;
+    has_feature_tokens_baseline?: boolean;
+    has_feature_stats_baseline?: boolean;
     num_samples?: number;
     run_id?: number;
     run_name?: string;

@@ -118,6 +118,8 @@ def run_baseline_inference(
     max_samples: int,
     max_seq_length: int,
     interpretability_recorder=None,
+    feature_stats_baseline=None,
+    top_token_tracker_baseline=None,
 ) -> Tuple[List[Dict], Dict, float, List[Dict[str, Any]]]:
     """Run baseline inference without ablation."""
     baseline_results = []
@@ -192,6 +194,18 @@ def run_baseline_inference(
                 if bert_activation.shape[0] > 0:
                     sae_features = sae.encode(bert_activation)
                     sae_features_cpu = sae_features.detach().cpu().numpy()
+                    if feature_stats_baseline is not None:
+                        feature_stats_baseline.update(sae_features_cpu)
+                    if top_token_tracker_baseline is not None:
+                        top_token_tracker_baseline.update(
+                            sae_features_cpu,
+                            filtered_token_ids,
+                            prompt_idx=idx,
+                            prompt_text=text,
+                            prompt_tokens=filtered_prompt_tokens,
+                            predicted_label=pred_label,
+                            true_label=model.config.id2label[true_label],
+                        )
                     max_activations_per_feature = sae_features_cpu.max(axis=0)
                     top_10_indices = np.argsort(max_activations_per_feature)[-10:][::-1]
                     top_features = [

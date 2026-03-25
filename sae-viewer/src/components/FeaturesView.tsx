@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from "react";
 import FeatureInfo from "./featureInfo";
-import { fetchFeatures } from "../interpAPI";
+import { fetchFeatures, fetchMetadata } from "../interpAPI";
 
 type Props = {
   initialFeatureId?: number | null;
@@ -33,6 +33,16 @@ export default function FeaturesView({ initialFeatureId, onClearSearch }: Props)
   const [error, setError] = useState<string | null>(null);
   const [searchInput, setSearchInput] = useState("");
   const initialFeatureRef = useRef<number | null>(initialFeatureId ?? null);
+  const [hasBaselineTokens, setHasBaselineTokens] = useState(false);
+  const [tokenVariant, setTokenVariant] = useState<"baseline" | "ablated">("ablated");
+
+  useEffect(() => {
+    fetchMetadata()
+      .then((d) => {
+        setHasBaselineTokens(d.metadata?.has_feature_tokens_baseline === true);
+      })
+      .catch(() => setHasBaselineTokens(false));
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -106,6 +116,13 @@ export default function FeaturesView({ initialFeatureId, onClearSearch }: Props)
       : null;
 
   const featureRows = payload?.features || [];
+  const visibleRows = featureRows.filter((feat) => {
+    const metrics = feat.metrics || {};
+    const frac = metrics.fraction_active ?? 0;
+    const maxAct = metrics.max_activation ?? 0;
+    // "Dead" latent features never fired (no positive activations) in this run.
+    return !(frac === 0 && maxAct === 0);
+  });
 
   return (
     <div className="app-shell">
@@ -156,6 +173,20 @@ export default function FeaturesView({ initialFeatureId, onClearSearch }: Props)
               ))}
             </select>
           </label>
+          {hasBaselineTokens && (
+            <label>
+              Token examples
+              <select
+                value={tokenVariant}
+                onChange={(e) =>
+                  setTokenVariant(e.target.value as "baseline" | "ablated")
+                }
+              >
+                <option value="ablated">Ablated run</option>
+                <option value="baseline">Baseline (no ablation)</option>
+              </select>
+            </label>
+          )}
         </div>
 
         <div className="control-row search-row">
@@ -178,6 +209,11 @@ export default function FeaturesView({ initialFeatureId, onClearSearch }: Props)
         <div className="feature-table-wrapper">
           {loading ? (
             <div>Loading features…</div>
+          ) : visibleRows.length === 0 ? (
+            <div style={{ padding: "8px 0" }}>
+              No active features in the current top list. Try a different metric or increase{" "}
+              <code>Top features</code>.
+            </div>
           ) : (
             <table className="feature-table">
               <thead>
@@ -190,7 +226,7 @@ export default function FeaturesView({ initialFeatureId, onClearSearch }: Props)
                 </tr>
               </thead>
               <tbody>
-                {featureRows.map((feat) => {
+                {visibleRows.map((feat) => {
                   const metrics = feat.metrics || {};
                   return (
                     <tr
@@ -232,7 +268,7 @@ export default function FeaturesView({ initialFeatureId, onClearSearch }: Props)
           )}
         </header>
         {selectedFeature ? (
-          <FeatureInfo feature={selectedFeature} />
+          <FeatureInfo feature={selectedFeature} tokenVariant={tokenVariant} />
         ) : (
           <div>Select a feature from the left column.</div>
         )}
