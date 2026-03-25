@@ -123,8 +123,8 @@ Opens at `http://localhost:1234` with two tabs:
 ### Three Levels of Data
 
 1. **Statistics for ALL features** (all 32k)
-   - Mean activation, max activation, fraction active
-   - Computed but not saved per-token
+   - Mean activation, max activation, fraction active (stored per-feature)
+   - Enables searching/loading scalar metrics for any feature ID
 
 2. **Top 100 features per metric** (300 unique features)
    - Saves 20 top-activating token examples each

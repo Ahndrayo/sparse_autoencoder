@@ -42,13 +42,34 @@ export default function FeaturesView({ initialFeatureId, onClearSearch }: Props)
       .then((data) => {
         if (cancelled) return;
         setPayload(data);
-        const desired = initialFeatureRef.current;
-        if (desired !== null && data.features.some((f) => f.feature_id === desired)) {
-          setSelectedFeatureId(desired);
-          initialFeatureRef.current = null; // consume initial selection
-        } else if (!data.features.some((f) => f.feature_id === selectedFeatureId)) {
-          setSelectedFeatureId(data.features[0]?.feature_id ?? null);
-        }
+        setSelectedFeatureId((prev) => {
+          const desired = initialFeatureRef.current;
+
+          if (desired !== null) {
+            // If the user/search has already moved away from the initial selection,
+            // don't allow future refetches to hijack the UI.
+            if (prev !== desired) {
+              initialFeatureRef.current = null;
+              return prev;
+            }
+
+            // Only consume the initial selection when it is present in the loaded top table.
+            if (data.features.some((f) => f.feature_id === desired)) {
+              initialFeatureRef.current = null;
+              return desired;
+            }
+
+            // Keep the currently selected feature even if it is outside the top-N table.
+            return prev;
+          }
+
+          // Initial load (no selection yet): default to the first row.
+          if (prev === null) {
+            return data.features[0]?.feature_id ?? null;
+          }
+
+          return prev;
+        });
       })
       .catch((err) => {
         if (cancelled) return;
@@ -62,7 +83,7 @@ export default function FeaturesView({ initialFeatureId, onClearSearch }: Props)
     return () => {
       cancelled = true;
     };
-  }, [limit, metric, selectedFeatureId]);
+  }, [limit, metric]);
 
   // Update selection if parent passes a new initialFeatureId
   useEffect(() => {

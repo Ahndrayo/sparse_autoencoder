@@ -80,10 +80,34 @@ class FeatureProbeData:
             )
 
         feature_metrics_map: dict[int, dict[str, float]] = {}
-        for metric_block in feature_stats.get("metrics", {}).values():
-            for entry in metric_block.get("top_features", []):
-                fid = int(entry["feature_id"])
-                feature_metrics_map.setdefault(fid, entry.get("metrics", {}))
+        num_features = int(feature_stats.get("num_features", 0))
+        mean_activation = feature_stats.get("mean_activation")
+        max_activation = feature_stats.get("max_activation")
+        fraction_active = feature_stats.get("fraction_active")
+        if (
+            num_features > 0
+            and isinstance(mean_activation, list)
+            and isinstance(max_activation, list)
+            and isinstance(fraction_active, list)
+            and len(mean_activation) == num_features
+            and len(max_activation) == num_features
+            and len(fraction_active) == num_features
+        ):
+            # New format: explicit scalar metrics for *all* feature IDs.
+            feature_metrics_map = {
+                fid: {
+                    "mean_activation": float(mean_activation[fid]),
+                    "max_activation": float(max_activation[fid]),
+                    "fraction_active": float(fraction_active[fid]),
+                }
+                for fid in range(num_features)
+            }
+        else:
+            # Legacy format: only store metrics for "top features" per metric.
+            for metric_block in feature_stats.get("metrics", {}).values():
+                for entry in metric_block.get("top_features", []):
+                    fid = int(entry["feature_id"])
+                    feature_metrics_map.setdefault(fid, entry.get("metrics", {}))
         metric_names = feature_stats.get("metrics", {}).keys()
         print(
             "[feature_probe_server] Loaded metrics:",
@@ -240,16 +264,18 @@ class FeatureProbeData:
         }
 
     def get_feature_info(self, feature_id: int, top_k: int = 10) -> dict[str, Any]:
-        metrics = self.feature_metrics_map.get(feature_id)
-        if metrics is None:
-            raise ValueError(f"No metric snapshot stored for feature {feature_id}")
+        if feature_id < 0 or feature_id >= self.num_features:
+            raise ValueError(
+                f"feature_id {feature_id} out of range (num_features={self.num_features})"
+            )
 
+        metrics = self.feature_metrics_map.get(feature_id, {})
         mean_act = metrics.get("mean_activation", 0.0)
         density = metrics.get("fraction_active", 0.0)
         mean_sq = (
             self.mean_act_squared[feature_id]
-            if 0 <= feature_id < len(self.mean_act_squared)
-            else mean_act ** 2
+            if self.mean_act_squared and 0 <= feature_id < len(self.mean_act_squared)
+            else mean_act**2
         )
 
         tokens = self.feature_tokens.get(str(feature_id), [])
