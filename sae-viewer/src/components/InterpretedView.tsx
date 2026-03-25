@@ -107,6 +107,97 @@ export default function InterpretedView() {
 
   const maxExplEvalRows = Math.max(explExamples.length, evalExamples.length);
 
+  type SortKey =
+    | "expl_snippet"
+    | "expl_score"
+    | "eval_snippet"
+    | "true_score"
+    | "predicted_score"
+    | "difference";
+  const [sortKey, setSortKey] = useState<SortKey>("difference");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+
+  const sortedRows = useMemo(() => {
+    const rows = Array.from({ length: maxExplEvalRows }).map((_, i) => {
+      const expl = explExamples[i] ?? null;
+      const ev = evalExamples[i] ?? null;
+      const trueScore = ev?.quantized_true_score ?? null;
+      const predScore = ev?.predicted_score ?? null;
+      const difference =
+        typeof trueScore === "number" && typeof predScore === "number"
+          ? Math.abs(predScore - trueScore)
+          : null;
+
+      return {
+        i,
+        expl,
+        ev,
+        difference,
+      };
+    });
+
+    const dirMul = sortDir === "asc" ? 1 : -1;
+
+    const getNum = (x: unknown): number | null => {
+      if (typeof x === "number") return x;
+      if (x === null || x === undefined) return null;
+      const n = Number(x);
+      return Number.isFinite(n) ? n : null;
+    };
+
+    const compare = (a: typeof rows[number], b: typeof rows[number]) => {
+      const aVal =
+        sortKey === "expl_snippet"
+          ? (a.expl?.snippet ?? "").toString()
+          : sortKey === "eval_snippet"
+          ? (a.ev?.snippet ?? "").toString()
+          : sortKey === "expl_score"
+          ? getNum(a.expl?.quantized_score)
+          : sortKey === "true_score"
+          ? getNum(a.ev?.quantized_true_score)
+          : sortKey === "predicted_score"
+          ? getNum(a.ev?.predicted_score)
+          : getNum(a.difference);
+      const bVal =
+        sortKey === "expl_snippet"
+          ? (b.expl?.snippet ?? "").toString()
+          : sortKey === "eval_snippet"
+          ? (b.ev?.snippet ?? "").toString()
+          : sortKey === "expl_score"
+          ? getNum(b.expl?.quantized_score)
+          : sortKey === "true_score"
+          ? getNum(b.ev?.quantized_true_score)
+          : sortKey === "predicted_score"
+          ? getNum(b.ev?.predicted_score)
+          : getNum(b.difference);
+
+      if (typeof aVal === "string" && typeof bVal === "string") {
+        return dirMul * aVal.localeCompare(bVal);
+      }
+
+      const aNum = typeof aVal === "number" ? aVal : null;
+      const bNum = typeof bVal === "number" ? bVal : null;
+
+      if (aNum === null && bNum === null) return a.i - b.i;
+      if (aNum === null) return 1;
+      if (bNum === null) return -1;
+      return dirMul * (aNum - bNum);
+    };
+
+    return rows.slice().sort(compare);
+  }, [
+    evalExamples,
+    explExamples,
+    maxExplEvalRows,
+    sortDir,
+    sortKey,
+  ]);
+
+  const sortIndicator = (k: SortKey) => {
+    if (sortKey !== k) return "";
+    return sortDir === "asc" ? " ▲" : " ▼";
+  };
+
   return (
     <div className="app-shell">
       <div className="column features-column">
@@ -223,24 +314,98 @@ export default function InterpretedView() {
             <table className="activations-table" style={{ width: "100%" }}>
               <thead>
                 <tr>
-                  <th>Explanation Sample</th>
-                  <th>Score</th>
-                  <th>Evaluation Sample</th>
-                  <th>True</th>
-                  <th>Pred</th>
+                  <th
+                    style={{ cursor: "pointer" }}
+                    onClick={() => {
+                      if (sortKey === "expl_snippet") {
+                        setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+                      } else {
+                        setSortKey("expl_snippet");
+                        setSortDir("asc");
+                      }
+                    }}
+                  >
+                    Explanation Sample{sortIndicator("expl_snippet")}
+                  </th>
+                  <th
+                    style={{ cursor: "pointer" }}
+                    onClick={() => {
+                      if (sortKey === "expl_score") {
+                        setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+                      } else {
+                        setSortKey("expl_score");
+                        setSortDir("desc");
+                      }
+                    }}
+                  >
+                    Score{sortIndicator("expl_score")}
+                  </th>
+                  <th
+                    style={{ cursor: "pointer" }}
+                    onClick={() => {
+                      if (sortKey === "eval_snippet") {
+                        setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+                      } else {
+                        setSortKey("eval_snippet");
+                        setSortDir("asc");
+                      }
+                    }}
+                  >
+                    Evaluation Sample{sortIndicator("eval_snippet")}
+                  </th>
+                  <th
+                    style={{ cursor: "pointer" }}
+                    onClick={() => {
+                      if (sortKey === "true_score") {
+                        setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+                      } else {
+                        setSortKey("true_score");
+                        setSortDir("desc");
+                      }
+                    }}
+                  >
+                    True{sortIndicator("true_score")}
+                  </th>
+                  <th
+                    style={{ cursor: "pointer" }}
+                    onClick={() => {
+                      if (sortKey === "predicted_score") {
+                        setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+                      } else {
+                        setSortKey("predicted_score");
+                        setSortDir("desc");
+                      }
+                    }}
+                  >
+                    Pred{sortIndicator("predicted_score")}
+                  </th>
+                  <th
+                    style={{ cursor: "pointer" }}
+                    onClick={() => {
+                      if (sortKey === "difference") {
+                        setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+                      } else {
+                        setSortKey("difference");
+                        setSortDir("desc");
+                      }
+                    }}
+                  >
+                    Difference{sortIndicator("difference")}
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 {maxExplEvalRows === 0 ? (
                   <tr>
-                    <td colSpan={5}>No example snippets stored.</td>
+                    <td colSpan={6}>No example snippets stored.</td>
                   </tr>
                 ) : (
-                  Array.from({ length: maxExplEvalRows }).map((_, i) => {
-                    const expl = explExamples[i] ?? null;
-                    const ev = evalExamples[i] ?? null;
+                  sortedRows.map((row) => {
+                    const expl = row.expl;
+                    const ev = row.ev;
+                    const diff = row.difference;
                     return (
-                      <tr key={i}>
+                      <tr key={row.i}>
                         <td style={{ verticalAlign: "top" }}>
                           <div style={{ whiteSpace: "pre-wrap" }}>
                             {expl?.snippet || "—"}
@@ -259,6 +424,9 @@ export default function InterpretedView() {
                         </td>
                         <td style={{ verticalAlign: "top" }}>
                           {ev?.predicted_score ?? "—"}
+                        </td>
+                        <td style={{ verticalAlign: "top" }}>
+                          {diff === null || diff === undefined ? "—" : diff}
                         </td>
                       </tr>
                     );
