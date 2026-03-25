@@ -22,9 +22,6 @@ export default function InterpretedView() {
   const [error, setError] = useState<string | null>(null);
   const [detail, setDetail] = useState<any | null>(null);
 
-  const [explIndex, setExplIndex] = useState(0);
-  const [evalIndex, setEvalIndex] = useState(0);
-
   const requestId = useRef(0);
 
   useEffect(() => {
@@ -74,8 +71,6 @@ export default function InterpretedView() {
         if (cancelled) return;
         if (myRequestId !== requestId.current) return;
         setDetail(d);
-        setExplIndex(0);
-        setEvalIndex(0);
       })
       .catch((err) => {
         if (cancelled) return;
@@ -110,11 +105,7 @@ export default function InterpretedView() {
     ? detail.evaluation_examples
     : [];
 
-  const curExpl = explExamples[explIndex] ?? null;
-  const curEval = evalExamples[evalIndex] ?? null;
-
-  const hasExpl = explExamples.length > 0 && curExpl !== null;
-  const hasEval = evalExamples.length > 0 && curEval !== null;
+  const maxExplEvalRows = Math.max(explExamples.length, evalExamples.length);
 
   return (
     <div className="app-shell">
@@ -240,91 +231,39 @@ export default function InterpretedView() {
                 </tr>
               </thead>
               <tbody>
-                <tr>
-                  <td style={{ verticalAlign: "top" }}>
-                    {hasExpl ? (
-                      <div>
-                        <div style={{ whiteSpace: "pre-wrap" }}>
-                          {curExpl.snippet || "—"}
-                        </div>
-                        <div className="control-row" style={{ marginTop: 8 }}>
-                          <button
-                            onClick={() =>
-                              setExplIndex((i) => Math.max(0, i - 1))
-                            }
-                            disabled={explIndex <= 0}
-                          >
-                            Prev
-                          </button>
-                          <span>
-                            {explIndex + 1}/{explExamples.length}
-                          </span>
-                          <button
-                            onClick={() =>
-                              setExplIndex((i) =>
-                                Math.min(explExamples.length - 1, i + 1)
-                              )
-                            }
-                            disabled={explIndex >= explExamples.length - 1}
-                          >
-                            Next
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div>No example snippets stored.</div>
-                    )}
-                  </td>
-                  <td style={{ verticalAlign: "top" }}>
-                    {hasExpl ? (
-                      <div>
-                        {curExpl.quantized_score ?? "—"}
-                      </div>
-                    ) : (
-                      "—"
-                    )}
-                  </td>
-                  <td style={{ verticalAlign: "top" }}>
-                    {hasEval ? (
-                      <div>
-                        <div style={{ whiteSpace: "pre-wrap" }}>
-                          {curEval.snippet || "—"}
-                        </div>
-                        <div className="control-row" style={{ marginTop: 8 }}>
-                          <button
-                            onClick={() =>
-                              setEvalIndex((i) => Math.max(0, i - 1))
-                            }
-                            disabled={evalIndex <= 0}
-                          >
-                            Prev
-                          </button>
-                          <span>
-                            {evalIndex + 1}/{evalExamples.length}
-                          </span>
-                          <button
-                            onClick={() =>
-                              setEvalIndex((i) =>
-                                Math.min(evalExamples.length - 1, i + 1)
-                              )
-                            }
-                            disabled={evalIndex >= evalExamples.length - 1}
-                          >
-                            Next
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div>No example snippets stored.</div>
-                    )}
-                  </td>
-                  <td style={{ verticalAlign: "top" }}>
-                    {hasEval ? curEval.quantized_true_score ?? "—" : "—"}
-                  </td>
-                  <td style={{ verticalAlign: "top" }}>
-                    {hasEval ? curEval.predicted_score ?? "—" : "—"}
-                  </td>
-                </tr>
+                {maxExplEvalRows === 0 ? (
+                  <tr>
+                    <td colSpan={5}>No example snippets stored.</td>
+                  </tr>
+                ) : (
+                  Array.from({ length: maxExplEvalRows }).map((_, i) => {
+                    const expl = explExamples[i] ?? null;
+                    const ev = evalExamples[i] ?? null;
+                    return (
+                      <tr key={i}>
+                        <td style={{ verticalAlign: "top" }}>
+                          <div style={{ whiteSpace: "pre-wrap" }}>
+                            {expl?.snippet || "—"}
+                          </div>
+                        </td>
+                        <td style={{ verticalAlign: "top" }}>
+                          {expl?.quantized_score ?? "—"}
+                        </td>
+                        <td style={{ verticalAlign: "top" }}>
+                          <div style={{ whiteSpace: "pre-wrap" }}>
+                            {ev?.snippet || "—"}
+                          </div>
+                        </td>
+                        <td style={{ verticalAlign: "top" }}>
+                          {ev?.quantized_true_score ?? "—"}
+                        </td>
+                        <td style={{ verticalAlign: "top" }}>
+                          {ev?.predicted_score ?? "—"}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
               </tbody>
             </table>
           </div>
