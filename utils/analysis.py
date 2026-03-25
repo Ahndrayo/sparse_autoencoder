@@ -104,6 +104,7 @@ class InterpretabilityTokenRecorder:
 
     def __init__(
         self,
+        tokenizer,
         feature_ids: Sequence[int],
         max_rows_per_feature: int = 50_000,
         context_radius: int = 3,
@@ -112,32 +113,45 @@ class InterpretabilityTokenRecorder:
         if seed is not None:
             random.seed(seed)
             np.random.seed(seed)
+        self.tokenizer = tokenizer
         self.feature_ids: Set[int] = {int(x) for x in feature_ids}
         self.max_rows = int(max_rows_per_feature)
         self.context_radius = int(context_radius)
         self._reservoir: Dict[int, List[tuple]] = {fid: [] for fid in self.feature_ids}
         self._seen: Dict[int, int] = {fid: 0 for fid in self.feature_ids}
 
-    def _make_snippet(self, tokens: List[str], pos: int) -> str:
+    def _make_snippet(self, token_ids: List[int], pos: int) -> str:
         r = self.context_radius
         lo = max(0, pos - r)
-        hi = min(len(tokens), pos + r + 1)
-        return " ".join(tokens[lo:hi])
+        hi = min(len(token_ids), pos + r + 1)
+        decoded = self.tokenizer.decode(
+            token_ids[lo:hi],
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=True,
+        )
+        return decoded.strip()
 
-    def update(self, sae_features_filtered: np.ndarray, filtered_prompt_tokens: List[str]) -> None:
+    def update(self, sae_features_filtered: np.ndarray, filtered_token_ids: List[int]) -> None:
         """Append reservoir samples for each tracked feature. sae_features_filtered: [T, latent_dim]."""
         if not self.feature_ids or sae_features_filtered.size == 0:
             return
         ntok = sae_features_filtered.shape[0]
         for t in range(ntok):
+            snippet = self._make_snippet(filtered_token_ids, t)
+            if t < len(filtered_token_ids):
+                center_tok = self.tokenizer.decode(
+                    [filtered_token_ids[t]],
+                    skip_special_tokens=True,
+                    clean_up_tokenization_spaces=True,
+                ).strip()
+            else:
+                center_tok = ""
             for fid in self.feature_ids:
                 if fid >= sae_features_filtered.shape[1]:
                     continue
                 self._seen[fid] += 1
                 k = self._seen[fid]
                 act = float(sae_features_filtered[t, fid])
-                snippet = self._make_snippet(filtered_prompt_tokens, t)
-                center_tok = filtered_prompt_tokens[t] if t < len(filtered_prompt_tokens) else ""
                 bucket = self._reservoir[fid]
                 row = (act, snippet, center_tok)
                 if len(bucket) < self.max_rows:

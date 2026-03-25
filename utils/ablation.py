@@ -245,7 +245,7 @@ def run_baseline_inference(
                         }
                     )
                     if interpretability_recorder is not None:
-                        interpretability_recorder.update(sae_features_cpu, filtered_prompt_tokens)
+                        interpretability_recorder.update(sae_features_cpu, filtered_token_ids)
                 else:
                     baseline_features_map[idx] = {"top_features": [], "total_activation": 0.0}
                     baseline_headlines.append(
