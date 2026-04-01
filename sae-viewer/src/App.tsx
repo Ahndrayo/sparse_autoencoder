@@ -3,10 +3,14 @@ import React, { useEffect, useState } from "react";
 import FeaturesView from "./components/FeaturesView";
 import HeadlinesView from "./components/HeadlinesView";
 import AblationView from "./components/AblationView";
+import InterpretedView from "./components/InterpretedView";
 import { fetchMetadata } from "./interpAPI";
 
 function App() {
-  const [activeTab, setActiveTab] = useState<"headlines" | "ablation" | "features">("headlines");
+  const [
+    activeTab,
+    setActiveTab,
+  ] = useState<"headlines" | "ablation" | "features" | "interpreted">("headlines");
   const [searchFeatureId, setSearchFeatureId] = useState<number | null>(null);
   const [hasAblationData, setHasAblationData] = useState(false);
   const [hasBaselineHeadlines, setHasBaselineHeadlines] = useState(true);
@@ -107,6 +111,12 @@ function App() {
           >
             Features
           </button>
+          <button
+            className={activeTab === "interpreted" ? "active" : ""}
+            onClick={() => setActiveTab("interpreted")}
+          >
+            Interpreted
+          </button>
         </div>
       </header>
 
@@ -124,6 +134,8 @@ function App() {
           accuracy={ablatedAccuracy}
           numSamples={runSampleCount}
         />
+      ) : activeTab === "interpreted" ? (
+        <InterpretedView />
       ) : (
         <FeaturesView
           initialFeatureId={searchFeatureId}

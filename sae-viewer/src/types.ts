@@ -91,11 +91,16 @@ export type FeatureInfo = {
 export const normalizeSequences = (...sequences: SequenceInfo[][]) => {
   // console.log('sequences', sequences)
   let flattened: SequenceInfo[] = flatten(sequences)
-  const maxActivation = Math.max(0, ...flattened.map((s) => Math.max(...s.acts)));
+  const maxActivation = Math.max(
+    0,
+    ...flattened.map((s) => (s.acts?.length ? Math.max(...s.acts) : 0))
+  );
+  // D3 scaleLinear has issues when domain min/max collapse to the same value.
+  const domainMax = maxActivation > 0 ? maxActivation : 1;
   const scaler = scaleLinear()
     // Even though we're only displaying positive activations, we still need to scale in a way that
     // accounts for the existence of negative activations, since our color scale includes them.
-    .domain([0, maxActivation])
+    .domain([0, domainMax])
     .range([0, 1])
 
   sequences.map((seqs) => seqs.map((s) => {

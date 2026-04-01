@@ -123,12 +123,12 @@ Opens at `http://localhost:1234` with two tabs:
 ### Three Levels of Data
 
 1. **Statistics for ALL features** (all 32k)
-   - Mean activation, max activation, fraction active
-   - Computed but not saved per-token
+   - Mean activation, max activation, fraction active (stored per-feature)
+   - Enables searching/loading scalar metrics for any feature ID
 
-2. **Top 100 features per metric** (300 unique features)
-   - Saves 20 top-activating token examples each
-   - Viewable in Features tab
+2. **Per-feature token examples (bounded)**
+   - For **every feature** that has a positive activation on some token, we keep up to `TOP_TOKENS_PER_FEATURE` highest-activating token rows (separate heaps for **baseline** and **ablated** runs).
+   - The Features table still shows only the **top N by metric** (`TOP_FEATURES`) for browsing; search any feature ID to load saved examples when present.
 
 3. **Top 10 features per headline** (per sample)
    - Which features fired strongest for each prediction
@@ -155,8 +155,10 @@ With the 32k SAE at 3.82% sparsity:
 │   └── layer_8_32k.pt
 ├── analysis_data/                   # Inference results
 │   └── <timestamp>_run-XXX/
-│       ├── feature_stats.json       # All features' statistics
-│       ├── feature_tokens.json      # Top 100 features' token examples
+│       ├── feature_stats.json       # Ablated run: per-feature stats + ranked top lists
+│       ├── feature_stats_baseline.json # Baseline run: same shape (optional)
+│       ├── feature_tokens.json      # Ablated run: up to K token rows per feature ID
+│       ├── feature_tokens_baseline.json # Baseline: same (optional)
 │       ├── headline_features.json   # Per-headline top features
 │       ├── prompts.jsonl            # Sample metadata
 │       └── metadata.json            # Run configuration
@@ -190,15 +192,15 @@ Then rerun inference, restart the server, and refresh the viewer.
 Edit the inference cell to add custom feature metrics (e.g., entropy, kurtosis) - they'll appear automatically in the viewer's metric dropdown.
 
 ### Increase Feature Coverage
-Change `TOP_FEATURES = 100` to track more features with token examples (increases storage).
+Change `TOP_FEATURES` to show longer ranked lists in JSON. Change `TOP_TOKENS_PER_FEATURE` to keep more token examples **per feature** (increases storage a lot at large SAE widths).
 
 ### Process More Samples
 Change `MAX_SAMPLES = 100` to analyze more validation examples (increases compute time).
 
 ## Notes
 
-- Only the top 100 features per metric have detailed token examples
-- All 32k features have summary statistics and can be searched
+- Token example rows are **capped per feature** (`TOP_TOKENS_PER_FEATURE`); rare features may have fewer than K rows.
+- After saving, use the Features tab **Token examples** control (when baseline files exist) to switch baseline vs ablated token lists.
 - Each run creates a new timestamped folder in `analysis_data/`
 - The viewer always loads the latest run unless `--run-id` is specified
 - GPU with CUDA strongly recommended for SAE training and FinBERT finetuning

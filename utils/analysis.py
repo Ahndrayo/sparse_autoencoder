@@ -1,8 +1,13 @@
 """Feature analysis utilities for SAE feature tracking and aggregation."""
 
-import numpy as np
+import json
+import random
+from collections import Counter
+from pathlib import Path
+
 import heapq
-from typing import List
+import numpy as np
+from typing import Dict, List, Optional, Sequence, Set, Union
 
 
 class FeatureStatsAggregator:
@@ -48,10 +53,17 @@ class FeatureTopTokenTracker:
     def update(self, token_activations: np.ndarray, token_ids: List[int], 
                prompt_idx: int, prompt_text: str, prompt_tokens: List[str],
                predicted_label: str = None, true_label: str = None):
-        """Update with tokens from one prompt."""
+        """Update with tokens from one prompt.
+
+        For each token position, we consider **every feature with positive activation**
+        (SAE latents are typically ReLU / nonnegative). That way each feature's heap
+        collects up to ``top_k`` highest-activating token occurrences **across the run**,
+        not only when the feature was in the global top-5 at that token.
+        """
         for token_pos, (act_vec, token_id) in enumerate(zip(token_activations, token_ids)):
-            top_features = np.argsort(act_vec)[-5:]
-            for feat_id in top_features:
+            feat_ids = np.flatnonzero(act_vec > 0)
+            for feat_id in feat_ids:
+                feat_id = int(feat_id)
                 activation = float(act_vec[feat_id])
                 if activation <= 0:
                     continue
@@ -82,6 +94,104 @@ class FeatureTopTokenTracker:
             sorted_tokens = sorted(self.heaps[feat_id], key=lambda x: -x[0])
             result[str(feat_id)] = [meta for _, meta in sorted_tokens]
         return result
+
+
+class InterpretabilityTokenRecorder:
+    """
+    Per-token (activation, snippet) traces for selected SAE features during baseline inference.
+    Uses reservoir sampling per feature to cap memory. Export format matches SAEInterpretabilityEvaluator.
+    """
+
+    def __init__(
+        self,
+        tokenizer,
+        feature_ids: Sequence[int],
+        max_rows_per_feature: int = 50_000,
+        context_radius: int = 3,
+        seed: Optional[int] = None,
+    ):
+        if seed is not None:
+            random.seed(seed)
+            np.random.seed(seed)
+        self.tokenizer = tokenizer
+        self.feature_ids: Set[int] = {int(x) for x in feature_ids}
+        self.max_rows = int(max_rows_per_feature)
+        self.context_radius = int(context_radius)
+        self._reservoir: Dict[int, List[tuple]] = {fid: [] for fid in self.feature_ids}
+        self._seen: Dict[int, int] = {fid: 0 for fid in self.feature_ids}
+
+    def _make_snippet(self, token_ids: List[int], pos: int) -> str:
+        r = self.context_radius
+        lo = max(0, pos - r)
+        hi = min(len(token_ids), pos + r + 1)
+        decoded = self.tokenizer.decode(
+            token_ids[lo:hi],
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=True,
+        )
+        return decoded.strip()
+
+    def update(self, sae_features_filtered: np.ndarray, filtered_token_ids: List[int]) -> None:
+        """Append reservoir samples for each tracked feature. sae_features_filtered: [T, latent_dim]."""
+        if not self.feature_ids or sae_features_filtered.size == 0:
+            return
+        ntok = sae_features_filtered.shape[0]
+        for t in range(ntok):
+            snippet = self._make_snippet(filtered_token_ids, t)
+            if t < len(filtered_token_ids):
+                center_tok = self.tokenizer.decode(
+                    [filtered_token_ids[t]],
+                    skip_special_tokens=True,
+                    clean_up_tokenization_spaces=True,
+                ).strip()
+            else:
+                center_tok = ""
+            for fid in self.feature_ids:
+                if fid >= sae_features_filtered.shape[1]:
+                    continue
+                self._seen[fid] += 1
+                k = self._seen[fid]
+                act = float(sae_features_filtered[t, fid])
+                bucket = self._reservoir[fid]
+                row = (act, snippet, center_tok)
+                if len(bucket) < self.max_rows:
+                    bucket.append(row)
+                else:
+                    j = random.randint(1, k)
+                    if j <= self.max_rows:
+                        bucket[random.randint(0, self.max_rows - 1)] = row
+
+    def export_dict(self) -> Dict[str, dict]:
+        """Build JSON-serializable payload: feature_id -> activations, snippets, top_token_str."""
+        out: Dict[str, dict] = {}
+        for fid, bucket in self._reservoir.items():
+            if not bucket:
+                continue
+            acts = np.array([b[0] for b in bucket], dtype=np.float64)
+            snippets = [b[1] for b in bucket]
+            center_tokens = [b[2] for b in bucket]
+            pos = acts > 0
+            if pos.any():
+                thr = float(np.percentile(acts[pos], 90))
+            else:
+                thr = 0.0
+            top_toks = [tok for a, tok in zip(acts, center_tokens) if a >= thr and tok]
+            if top_toks:
+                top_token_str = Counter(top_toks).most_common(1)[0][0]
+            else:
+                top_token_str = ""
+            out[str(fid)] = {
+                "activations": acts.tolist(),
+                "snippets": snippets,
+                "top_token_str": top_token_str,
+            }
+        return out
+
+    def save_json(self, path: Union[str, Path]) -> None:
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(self.export_dict(), f, indent=2)
 
 
 class HeadlineFeatureAggregator:
@@ -224,5 +334,6 @@ class HeadlineFeatureAggregator:
 __all__ = [
     "FeatureStatsAggregator",
     "FeatureTopTokenTracker",
-    "HeadlineFeatureAggregator"
+    "HeadlineFeatureAggregator",
+    "InterpretabilityTokenRecorder",
 ]

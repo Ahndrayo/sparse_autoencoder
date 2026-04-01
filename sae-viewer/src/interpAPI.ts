@@ -29,11 +29,13 @@ export async function fetchFeatures(
 // feature_info endpoint
 export async function get_feature_info(
   feature: Feature,
-  ablated?: boolean
+  ablated?: boolean,
+  tokenVariant: "baseline" | "ablated" = "ablated"
 ): Promise<FeatureInfo> {
   const url = new URL(`${API_BASE}/api/feature_info`);
   url.searchParams.set("id", String(feature.atom));
   url.searchParams.set("top_k", "20");
+  url.searchParams.set("variant", tokenVariant);
   if (ablated) {
     url.searchParams.set("ablated", "1");
   }
@@ -75,6 +77,8 @@ export async function fetchMetadata(): Promise<{
     baseline_accuracy?: number;
     ablated_accuracy?: number;
     has_baseline_headlines?: boolean;
+    has_feature_tokens_baseline?: boolean;
+    has_feature_stats_baseline?: boolean;
     num_samples?: number;
     run_id?: number;
     run_name?: string;
@@ -89,6 +93,39 @@ export async function fetchMetadata(): Promise<{
   });
   if (!res.ok) {
     throw new Error(`Failed to load metadata: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+// interpretability endpoints (LLM explanation + evaluation)
+export async function fetchInterpretabilityFeatures(): Promise<{
+  features: Array<{
+    feature_id: number | string;
+    correlation?: number | null;
+    n_eval?: number | null;
+    skipped?: boolean;
+    error?: string;
+  }>;
+  has_results: boolean;
+}> {
+  const url = new URL(`${API_BASE}/api/interpretability/features`);
+  const res = await fetch(url.toString(), {
+    headers: { Accept: "application/json" },
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to load interpretability features: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchInterpretabilityFeature(featureId: number | string): Promise<any> {
+  const url = new URL(`${API_BASE}/api/interpretability/feature`);
+  url.searchParams.set("id", String(featureId));
+  const res = await fetch(url.toString(), {
+    headers: { Accept: "application/json" },
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to load interpretability feature: ${res.statusText}`);
   }
   return res.json();
 }
