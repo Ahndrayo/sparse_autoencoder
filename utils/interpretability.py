@@ -1,5 +1,6 @@
 """Two-phase SAE feature interpretability via local LLM (Ollama) + Spearman validation."""
 
+import hashlib
 import json
 import random
 import re
@@ -81,6 +82,16 @@ def _strip_thinking(text: str) -> str:
     return out.strip()
 
 
+def _per_feature_rng_seed(random_seed: int, feature_key: str) -> int:
+    """Stable seed for np.random.Generator; avoids salted built-in hash()."""
+    try:
+        fid = int(feature_key)
+    except ValueError:
+        digest = hashlib.md5(feature_key.encode("utf-8")).digest()[:8]
+        fid = int.from_bytes(digest, "little")
+    return (random_seed + fid) % (2**32)
+
+
 class SAEInterpretabilityEvaluator:
     """
     Phase 1: Explain feature from scored examples (Anthropic-style sampling).
@@ -94,8 +105,14 @@ class SAEInterpretabilityEvaluator:
         explain_prompt_template: Optional[str] = None,
         eval_prompt_template: Optional[str] = None,
         random_seed: Optional[int] = None,
+        data_fraction: float = 1.0,
     ):
+        if not (0 < data_fraction <= 1.0):
+            raise ValueError("data_fraction must be in (0, 1]")
         self.data = self._load_data(json_path)
+        subset_seed = random_seed if random_seed is not None else 0
+        if data_fraction < 1.0:
+            self._subsample_loaded_data(self.data, data_fraction, subset_seed)
         self.model = model
         self.explain_prompt_template = explain_prompt_template or DEFAULT_EXPLAIN_PROMPT
         self.eval_prompt_template = eval_prompt_template or DEFAULT_EVAL_PROMPT
@@ -110,6 +127,27 @@ class SAEInterpretabilityEvaluator:
             raise FileNotFoundError(f"Interpretability data not found: {path}")
         with open(path, encoding="utf-8") as f:
             return json.load(f)
+
+    @staticmethod
+    def _subsample_loaded_data(data: Dict[str, Any], data_fraction: float, random_seed: int) -> None:
+        """In-place: each feature keeps max(1, round(n * data_fraction)) rows, original order preserved."""
+        for key, feat in data.items():
+            if not isinstance(feat, dict):
+                continue
+            acts = feat.get("activations")
+            snippets = feat.get("snippets")
+            if not isinstance(acts, list) or not isinstance(snippets, list):
+                continue
+            n = len(acts)
+            if n != len(snippets) or n == 0:
+                continue
+            k = max(1, int(round(n * data_fraction)))
+            k = min(k, n)
+            rng = np.random.default_rng(_per_feature_rng_seed(random_seed, str(key)))
+            idx = rng.choice(n, size=k, replace=False)
+            idx = np.sort(idx)
+            feat["activations"] = [acts[i] for i in idx]
+            feat["snippets"] = [snippets[i] for i in idx]
 
     @staticmethod
     def quantize(activation: float, max_val: float) -> int:
