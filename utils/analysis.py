@@ -49,6 +49,8 @@ class FeatureTopTokenTracker:
         self.feature_dim = feature_dim
         self.top_k = top_k
         self.heaps = [[] for _ in range(feature_dim)]
+        # Tie-breaker so heapq never compares dict metadata when activations are equal.
+        self._push_seq = 0
     
     def update(self, token_activations: np.ndarray, token_ids: List[int], 
                prompt_idx: int, prompt_text: str, prompt_tokens: List[str],
@@ -82,17 +84,19 @@ class FeatureTopTokenTracker:
                     "predicted_label": predicted_label,
                     "true_label": true_label,
                 }
+                self._push_seq += 1
+                entry = (activation, self._push_seq, metadata)
                 if len(heap) < self.top_k:
-                    heapq.heappush(heap, (activation, metadata))
+                    heapq.heappush(heap, entry)
                 elif activation > heap[0][0]:
-                    heapq.heapreplace(heap, (activation, metadata))
+                    heapq.heapreplace(heap, entry)
     
     def export(self):
         """Export top tokens for each feature."""
         result = {}
         for feat_id in range(self.feature_dim):
             sorted_tokens = sorted(self.heaps[feat_id], key=lambda x: -x[0])
-            result[str(feat_id)] = [meta for _, meta in sorted_tokens]
+            result[str(feat_id)] = [meta for _, _, meta in sorted_tokens]
         return result
 
 
