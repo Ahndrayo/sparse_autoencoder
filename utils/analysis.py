@@ -289,6 +289,12 @@ class HeadlineFeatureAggregator:
         else:
             transition = None
         confidence_delta = float(confidence) - float(baseline_confidence)
+        # CNS components:
+        # delta_f: -1 (C->W), +1 (W->C), 0 (no flip)
+        # psi: 1 when delta_f == 0, otherwise sign(delta_f)
+        delta_f = -1 if transition == "C -> W" else (1 if transition == "W -> C" else 0)
+        psi = 1 if delta_f == 0 else (1 if delta_f > 0 else -1)
+        cns = float(delta_f + psi * confidence_delta)
 
         # Compute ablation metrics
         baseline_top_features = baseline_features.get('top_features', [])
@@ -320,6 +326,9 @@ class HeadlineFeatureAggregator:
             "baseline_prediction": baseline_prediction,
             "baseline_confidence": float(baseline_confidence) if baseline_confidence is not None else None,
             "confidence_delta": float(confidence_delta),
+            "delta_f": int(delta_f),
+            "psi": int(psi),
+            "cns": cns,
             "transition": transition,
             "true_label": true_label,
             "correct": ablated_correct,

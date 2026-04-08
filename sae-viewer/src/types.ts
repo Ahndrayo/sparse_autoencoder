@@ -51,6 +51,9 @@ export type HeadlineInfo = {
   baseline_prediction?: string;
   baseline_confidence?: number;
   confidence_delta?: number;
+  delta_f?: number;
+  psi?: number;
+  cns?: number;
   transition?: string;
   true_label: string;
   correct: boolean;

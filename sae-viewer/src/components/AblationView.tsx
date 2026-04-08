@@ -13,6 +13,7 @@ type SortKey =
   | "baseline_prediction"
   | "predicted_label"
   | "confidence_delta"
+  | "cns"
   | "transition"
   | "ablation_energy_fraction_global"
   | "true_label"
@@ -155,6 +156,7 @@ export default function AblationView({ onFeatureClick, accuracy, numSamples }: P
                 <th>{renderSortLabel("Base Prediction", "baseline_prediction")}</th>
                 <th>{renderSortLabel("Ablated Prediction", "predicted_label")}</th>
                 <th>{renderSortLabel("Delta Confidence", "confidence_delta")}</th>
+                <th>{renderSortLabel("CNS", "cns")}</th>
                 <th>{renderSortLabel("Flip Outcome", "transition")}</th>
                 <th>{renderSortLabel("Ablation Impact", "ablation_energy_fraction_global")}</th>
                 <th>{renderSortLabel("True Label", "true_label")}</th>
@@ -223,6 +225,24 @@ export default function AblationView({ onFeatureClick, accuracy, numSamples }: P
                         ? `${h.confidence_delta >= 0 ? "+" : ""}${(
                             h.confidence_delta * 100
                           ).toFixed(1)}%`
+                        : "—"}
+                    </td>
+                    <td
+                      className="center"
+                      style={{
+                        color:
+                          h.cns === undefined
+                            ? "#6b7280"
+                            : Math.abs(h.cns) < 0.05
+                            ? "#6b7280"
+                            : h.cns > 0
+                            ? "#22c55e"
+                            : "#ef4444",
+                        fontWeight: "bold",
+                      }}
+                    >
+                      {h.cns !== undefined
+                        ? `${h.cns >= 0 ? "+" : ""}${h.cns.toFixed(3)}`
                         : "—"}
                     </td>
                     <td
