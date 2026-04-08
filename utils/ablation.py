@@ -2,7 +2,7 @@
 
 import numpy as np
 import torch
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 # How many top SAE latents (by max activation over tokens) to store per headline in baseline_headlines.
 HEADLINE_SAE_TOP_K = 64
@@ -121,6 +121,36 @@ def expand_features_with_similarity(
     return sorted(expanded)
 
 
+def inference_indices_random(dataset_len: int, max_samples: int, seed: int) -> List[int]:
+    """Deterministic subset of row indices: same (len, max_samples, seed) always returns the same list."""
+    n = int(dataset_len)
+    k = min(int(max_samples), n)
+    if k <= 0:
+        return []
+    rng = np.random.default_rng(seed)
+    return [int(x) for x in rng.choice(n, size=k, replace=False)]
+
+
+def resolve_inference_sample_indices(
+    dataset_len: int,
+    max_samples: int,
+    sample_indices: Optional[Sequence[int]] = None,
+) -> List[int]:
+    """Build ordered list of dataset row indices for inference. None => first min(max_samples, len) rows."""
+    n = int(dataset_len)
+    if sample_indices is None:
+        return list(range(min(int(max_samples), n)))
+    out = [int(i) for i in sample_indices]
+    seen = set()
+    for i in out:
+        if i < 0 or i >= n:
+            raise ValueError(f"sample index {i} out of range for dataset length {n}")
+        if i in seen:
+            raise ValueError("sample_indices must be unique")
+        seen.add(i)
+    return out
+
+
 def run_baseline_inference(
     model,
     tokenizer,
@@ -133,6 +163,7 @@ def run_baseline_inference(
     interpretability_recorder=None,
     feature_stats_baseline=None,
     top_token_tracker_baseline=None,
+    sample_indices: Optional[Sequence[int]] = None,
 ) -> Tuple[List[Dict], Dict, float, List[Dict[str, Any]], np.ndarray]:
     """Run baseline inference without ablation.
 
@@ -150,11 +181,12 @@ def run_baseline_inference(
         if enc_w is not None:
             latent_dim = int(enc_w.shape[0])
     target_layer = model.bert.encoder.layer[layer_to_extract]
+    iter_indices = resolve_inference_sample_indices(len(test_ds), max_samples, sample_indices)
+    n_iter = len(iter_indices)
 
     with torch.no_grad():
-        for idx, sample in enumerate(test_ds):
-            if idx >= max_samples:
-                break
+        for pos, sample_idx in enumerate(iter_indices):
+            sample = test_ds[sample_idx]
 
             text = sample["text"]
             true_label = sample["label"]
@@ -175,7 +207,7 @@ def run_baseline_inference(
 
             baseline_results.append(
                 {
-                    "sample_idx": idx,
+                    "sample_idx": sample_idx,
                     "text": text,
                     "true_label": model.config.id2label[true_label],
                     "predicted_label": pred_label,
@@ -224,7 +256,7 @@ def run_baseline_inference(
                         top_token_tracker_baseline.update(
                             sae_features_cpu,
                             filtered_token_ids,
-                            prompt_idx=idx,
+                            prompt_idx=pos,
                             prompt_text=text,
                             prompt_tokens=filtered_prompt_tokens,
                             predicted_label=pred_label,
@@ -240,7 +272,7 @@ def run_baseline_inference(
                         for fid in top_10_indices
                     ]
                     total_activation = sum(feat["activation"] for feat in top_features)
-                    baseline_features_map[idx] = {
+                    baseline_features_map[pos] = {
                         "top_features": top_features,
                         "total_activation": total_activation,
                     }
@@ -258,7 +290,7 @@ def run_baseline_inference(
                     ]
                     baseline_headlines.append(
                         {
-                            "row_id": int(idx),
+                            "row_id": int(pos),
                             "prompt": text,
                             "predicted_label": pred_label,
                             "confidence": float(confidence),
@@ -275,10 +307,10 @@ def run_baseline_inference(
                     if interpretability_recorder is not None:
                         interpretability_recorder.update(sae_features_cpu, filtered_token_ids)
                 else:
-                    baseline_features_map[idx] = {"top_features": [], "total_activation": 0.0}
+                    baseline_features_map[pos] = {"top_features": [], "total_activation": 0.0}
                     baseline_headlines.append(
                         {
-                            "row_id": int(idx),
+                            "row_id": int(pos),
                             "prompt": text,
                             "predicted_label": pred_label,
                             "confidence": float(confidence),
@@ -293,10 +325,10 @@ def run_baseline_inference(
                         np.zeros(latent_dim, dtype=np.float32) if latent_dim > 0 else np.array([], dtype=np.float32)
                     )
             else:
-                baseline_features_map[idx] = {"top_features": [], "total_activation": 0.0}
+                baseline_features_map[pos] = {"top_features": [], "total_activation": 0.0}
                 baseline_headlines.append(
                     {
-                        "row_id": int(idx),
+                        "row_id": int(pos),
                         "prompt": text,
                         "predicted_label": pred_label,
                         "confidence": float(confidence),
@@ -311,8 +343,8 @@ def run_baseline_inference(
                     np.zeros(latent_dim, dtype=np.float32) if latent_dim > 0 else np.array([], dtype=np.float32)
                 )
 
-            if (idx + 1) % 20 == 0:
-                print(f"  Baseline: {idx + 1}/{min(max_samples, len(test_ds))} samples")
+            if (pos + 1) % 20 == 0:
+                print(f"  Baseline: {pos + 1}/{n_iter} samples")
 
     baseline_accuracy = (
         sum(1 for r in baseline_results if r["predicted_id"] == test_ds[r["sample_idx"]]["label"])
@@ -348,6 +380,7 @@ def run_ablation_inference(
     normalized_decoder: torch.Tensor,
     similarity_top_m: int,
     similarity_cache: Dict[int, List[int]],
+    sample_indices: Optional[Sequence[int]] = None,
 ) -> Tuple[List[Dict], List[Dict], Dict[str, List[int]], set, float]:
     """Run ablation inference with feature intervention."""
     skip_hooks = ablation_config.get("skip_sae_reconstruction", False)
@@ -356,6 +389,8 @@ def run_ablation_inference(
     baseline_lookup = {r["sample_idx"]: r for r in baseline_results}
     similarity_stats = {"original_counts": [], "expanded_counts": []}
     all_ablated_features_set = set()
+    iter_indices = resolve_inference_sample_indices(len(test_ds), max_samples, sample_indices)
+    n_iter = len(iter_indices)
 
     if not skip_hooks and ablation_config["mode"] != "per_sample_top_k":
         target_layer = model.bert.encoder.layer[layer_to_extract]
@@ -363,9 +398,8 @@ def run_ablation_inference(
         hook_handle = target_layer.register_forward_hook(intervention_hook)
 
     with torch.no_grad():
-        for idx, sample in enumerate(test_ds):
-            if idx >= max_samples:
-                break
+        for pos, sample_idx in enumerate(iter_indices):
+            sample = test_ds[sample_idx]
 
             text = sample["text"]
             true_label = sample["label"]
@@ -387,7 +421,7 @@ def run_ablation_inference(
             if not skip_hooks and ablation_config["mode"] == "per_sample_top_k":
                 features_to_ablate_sample = [
                     f["feature_id"]
-                    for f in baseline_features_map[idx]["top_features"][: ablation_config["k"]]
+                    for f in baseline_features_map[pos]["top_features"][: ablation_config["k"]]
                 ]
                 validate_feature_ids(features_to_ablate_sample, sae.latent_dim, "per_sample_top_k features")
                 if similarity_enabled:
@@ -410,7 +444,7 @@ def run_ablation_inference(
             current_sample_data["token_ids"] = token_ids
             current_sample_data["prompt_tokens"] = prompt_tokens
             current_sample_data["text"] = text
-            current_sample_data["idx"] = idx
+            current_sample_data["idx"] = pos
 
             outputs = model(**inputs)
             logits = outputs.logits
@@ -436,14 +470,14 @@ def run_ablation_inference(
                 else:
                     features_ablated_for_this_sample = [
                         f["feature_id"]
-                        for f in baseline_features_map[idx]["top_features"][: ablation_config["k"]]
+                        for f in baseline_features_map[pos]["top_features"][: ablation_config["k"]]
                     ]
             else:
                 features_ablated_for_this_sample = features_to_ablate
 
             ablated_results.append(
                 {
-                    "sample_idx": idx,
+                    "sample_idx": sample_idx,
                     "text": text,
                     "true_label": model.config.id2label[true_label],
                     "predicted_label": pred_label,
@@ -476,21 +510,21 @@ def run_ablation_inference(
                     top_token_tracker_ablated.update(
                         sae_features_filtered,
                         filtered_token_ids,
-                        prompt_idx=idx,
+                        prompt_idx=pos,
                         prompt_text=text,
                         prompt_tokens=filtered_prompt_tokens,
                         predicted_label=pred_label,
                         true_label=model.config.id2label[true_label],
                     )
 
-                    baseline_data = baseline_lookup[idx]
+                    baseline_data = baseline_lookup[sample_idx]
                     if ablation_config["mode"] == "per_sample_top_k":
                         features_for_tracking = features_ablated_for_this_sample
                     else:
                         features_for_tracking = features_to_ablate
 
                     headline_aggregator_ablated.add_headline_with_ablation_metrics(
-                        prompt_idx=idx,
+                        prompt_idx=pos,
                         prompt_text=text,
                         token_activations=sae_features_filtered,
                         token_ids=filtered_token_ids,
@@ -498,7 +532,7 @@ def run_ablation_inference(
                         predicted_label=pred_label,
                         true_label=model.config.id2label[true_label],
                         confidence=confidence,
-                        baseline_features=baseline_features_map[idx],
+                        baseline_features=baseline_features_map[pos],
                         features_to_ablate=features_for_tracking,
                         baseline_prediction=baseline_data["predicted_label"],
                         baseline_confidence=baseline_data["confidence"],
@@ -506,7 +540,7 @@ def run_ablation_inference(
 
                     all_prompt_metadata_ablated.append(
                         {
-                            "row_id": idx,
+                            "row_id": pos,
                             "seq_len": seq_len,
                             "prompt": text,
                             "predicted_label": pred_label,
@@ -515,8 +549,8 @@ def run_ablation_inference(
                         }
                     )
 
-            if (idx + 1) % 20 == 0:
-                print(f"  Ablated: {idx + 1}/{min(max_samples, len(test_ds))} samples")
+            if (pos + 1) % 20 == 0:
+                print(f"  Ablated: {pos + 1}/{n_iter} samples")
 
     if not skip_hooks and ablation_config["mode"] != "per_sample_top_k":
         hook_handle.remove()
@@ -621,6 +655,8 @@ __all__ = [
     "validate_feature_ids",
     "normalize_decoder_weights",
     "expand_features_with_similarity",
+    "inference_indices_random",
+    "resolve_inference_sample_indices",
     "run_baseline_inference",
     "run_ablation_inference",
     "find_flipped_predictions",
