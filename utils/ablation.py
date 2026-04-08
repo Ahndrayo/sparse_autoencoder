@@ -2,7 +2,9 @@
 
 import numpy as np
 import torch
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+
+from sklearn.model_selection import StratifiedKFold
 
 # How many top SAE latents (by max activation over tokens) to store per headline in baseline_headlines.
 HEADLINE_SAE_TOP_K = 64
@@ -149,6 +151,71 @@ def resolve_inference_sample_indices(
             raise ValueError("sample_indices must be unique")
         seen.add(i)
     return out
+
+
+def stratified_k_fold_indices(
+    labels: Sequence[Union[int, float]],
+    n_splits: int,
+    *,
+    shuffle: bool = True,
+    random_state: int,
+) -> List[List[int]]:
+    """Stratified K-fold row indices. Reproducible for fixed (labels, n_splits, shuffle, random_state)."""
+    y = np.asarray(labels)
+    n = int(y.shape[0])
+    k = int(n_splits)
+    if k < 2:
+        raise ValueError("n_splits must be >= 2")
+    if n < k:
+        raise ValueError(f"Need at least n_splits={k} samples, got n={n}")
+    X = np.zeros((n, 1), dtype=np.float32)
+    skf = StratifiedKFold(n_splits=k, shuffle=shuffle, random_state=random_state)
+    return [[int(i) for i in test_idx] for _, test_idx in skf.split(X, y)]
+
+
+def select_features_to_ablate(
+    ablation_config: Dict[str, Any],
+    baseline_features_map: Dict[int, Any],
+    sae_latent_dim: int,
+    manual_features: List[int],
+    similarity_enabled: bool,
+    normalized_decoder: Optional[torch.Tensor],
+    similarity_top_m: int,
+    similarity_cache: Dict[int, List[int]],
+) -> Tuple[Optional[List[int]], Optional[List[int]]]:
+    """Global feature list after baseline (same logic as the notebook Feature Selection cell)."""
+    mode = ablation_config["mode"]
+    if mode == "manual":
+        features = list(manual_features)
+        original = list(manual_features)
+        validate_feature_ids(features, sae_latent_dim, "manual features")
+        if similarity_enabled:
+            if normalized_decoder is None:
+                raise ValueError("similarity_enabled requires normalized_decoder")
+            features = expand_features_with_similarity(
+                features, normalized_decoder, similarity_top_m, similarity_cache
+            )
+        return features, original
+    if mode == "union_top_k":
+        feature_set = set()
+        kk = int(ablation_config["k"])
+        for pos in baseline_features_map:
+            top_k_ids = [
+                f["feature_id"] for f in baseline_features_map[pos]["top_features"][:kk]
+            ]
+            feature_set.update(top_k_ids)
+        features = sorted(feature_set)
+        validate_feature_ids(features, sae_latent_dim, "union_top_k features")
+        if similarity_enabled:
+            if normalized_decoder is None:
+                raise ValueError("similarity_enabled requires normalized_decoder")
+            features = expand_features_with_similarity(
+                features, normalized_decoder, similarity_top_m, similarity_cache
+            )
+        return features, None
+    if mode == "per_sample_top_k":
+        return None, None
+    raise ValueError(f"Unknown ablation mode: {mode}")
 
 
 def run_baseline_inference(
@@ -657,6 +724,8 @@ __all__ = [
     "expand_features_with_similarity",
     "inference_indices_random",
     "resolve_inference_sample_indices",
+    "stratified_k_fold_indices",
+    "select_features_to_ablate",
     "run_baseline_inference",
     "run_ablation_inference",
     "find_flipped_predictions",
