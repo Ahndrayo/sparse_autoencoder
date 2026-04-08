@@ -4,6 +4,19 @@ import numpy as np
 import torch
 from typing import Any, Dict, List, Optional, Tuple
 
+# How many top SAE latents (by max activation over tokens) to store per headline in baseline_headlines.
+HEADLINE_SAE_TOP_K = 64
+
+
+def top_sae_latents_by_headline(max_activations_per_feature: np.ndarray, k: int) -> List[Dict[str, Any]]:
+    """Per headline: max activation per latent over sequence positions; return top k, descending."""
+    vec = np.asarray(max_activations_per_feature, dtype=np.float64)
+    if vec.size == 0:
+        return []
+    k = min(int(k), vec.shape[0])
+    top_idx = np.argsort(vec)[-k:][::-1]
+    return [{"feature_id": int(fid), "activation": float(vec[fid])} for fid in top_idx]
+
 
 def create_intervention_hook(sae, features_to_ablate: List[int], device, current_sample_data: Dict = None):
     """
@@ -120,11 +133,22 @@ def run_baseline_inference(
     interpretability_recorder=None,
     feature_stats_baseline=None,
     top_token_tracker_baseline=None,
-) -> Tuple[List[Dict], Dict, float, List[Dict[str, Any]]]:
-    """Run baseline inference without ablation."""
+) -> Tuple[List[Dict], Dict, float, List[Dict[str, Any]], np.ndarray]:
+    """Run baseline inference without ablation.
+
+    Returns:
+        baseline_sae_max_full: float32 array of shape (n_samples, latent_dim). Per sample, each
+        entry is max SAE activation over non-special tokens for that latent (same as top_sae_features).
+    """
     baseline_results = []
     baseline_features_map = {}
     baseline_headlines = []
+    baseline_sae_max_rows: List[np.ndarray] = []
+    latent_dim = int(getattr(sae, "latent_dim", 0))
+    if latent_dim <= 0:
+        enc_w = getattr(getattr(sae, "encoder", None), "weight", None)
+        if enc_w is not None:
+            latent_dim = int(enc_w.shape[0])
     target_layer = model.bert.encoder.layer[layer_to_extract]
 
     with torch.no_grad():
@@ -242,8 +266,12 @@ def run_baseline_inference(
                             "correct": pred_label == model.config.id2label[true_label],
                             "num_tokens": int(len(filtered_token_ids)),
                             "features": baseline_headline_features,
+                            "top_sae_features": top_sae_latents_by_headline(
+                                max_activations_per_feature, HEADLINE_SAE_TOP_K
+                            ),
                         }
                     )
+                    baseline_sae_max_rows.append(max_activations_per_feature.astype(np.float32))
                     if interpretability_recorder is not None:
                         interpretability_recorder.update(sae_features_cpu, filtered_token_ids)
                 else:
@@ -258,7 +286,11 @@ def run_baseline_inference(
                             "correct": pred_label == model.config.id2label[true_label],
                             "num_tokens": 0,
                             "features": [],
+                            "top_sae_features": [],
                         }
+                    )
+                    baseline_sae_max_rows.append(
+                        np.zeros(latent_dim, dtype=np.float32) if latent_dim > 0 else np.array([], dtype=np.float32)
                     )
             else:
                 baseline_features_map[idx] = {"top_features": [], "total_activation": 0.0}
@@ -272,7 +304,11 @@ def run_baseline_inference(
                         "correct": pred_label == model.config.id2label[true_label],
                         "num_tokens": 0,
                         "features": [],
+                        "top_sae_features": [],
                     }
+                )
+                baseline_sae_max_rows.append(
+                    np.zeros(latent_dim, dtype=np.float32) if latent_dim > 0 else np.array([], dtype=np.float32)
                 )
 
             if (idx + 1) % 20 == 0:
@@ -282,7 +318,13 @@ def run_baseline_inference(
         sum(1 for r in baseline_results if r["predicted_id"] == test_ds[r["sample_idx"]]["label"])
         / len(baseline_results)
     )
-    return baseline_results, baseline_features_map, baseline_accuracy, baseline_headlines
+    if baseline_sae_max_rows:
+        baseline_sae_max_full = np.stack(baseline_sae_max_rows, axis=0)
+    elif latent_dim > 0:
+        baseline_sae_max_full = np.zeros((0, latent_dim), dtype=np.float32)
+    else:
+        baseline_sae_max_full = np.zeros((0, 0), dtype=np.float32)
+    return baseline_results, baseline_features_map, baseline_accuracy, baseline_headlines, baseline_sae_max_full
 
 
 def run_ablation_inference(
@@ -582,4 +624,6 @@ __all__ = [
     "run_baseline_inference",
     "run_ablation_inference",
     "find_flipped_predictions",
+    "HEADLINE_SAE_TOP_K",
+    "top_sae_latents_by_headline",
 ]
