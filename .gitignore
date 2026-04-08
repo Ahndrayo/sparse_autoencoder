@@ -141,7 +141,11 @@ viz_analysis/Data/
 Transcripts
 Transcripts_Abridged
 transcript_comparison.txt
+Financial\ Articles\ Dataset
 
 # Data from finetuning model and SAE
 finbert_twitter_ft/
 finbert_sae/
+
+# Misc Scripts
+remote_setup.md
