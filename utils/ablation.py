@@ -108,12 +108,45 @@ def baseline_active_latent_mask(
 ) -> torch.Tensor:
     """Bool mask [latent_dim]: True where baseline run saw at least one positive activation."""
     stats = feature_stats_baseline.get_stats()
-    max_act = np.asarray(stats["max_activations"], dtype=np.float64)
+    # FeatureStatsAggregator.get_stats() uses key "max_activation" (singular)
+    max_act = np.asarray(stats["max_activation"], dtype=np.float64)
     if max_act.shape[0] != latent_dim:
         raise ValueError(
-            f"feature_stats_baseline max_activations length {max_act.shape[0]} != latent_dim {latent_dim}"
+            f"feature_stats_baseline max_activation length {max_act.shape[0]} != latent_dim {latent_dim}"
         )
     return torch.as_tensor(max_act > 1e-12, dtype=torch.bool, device=device)
+
+
+def sort_features_by_max_seed_similarity(
+    feature_ids: Sequence[int],
+    seed_feature_ids: Sequence[int],
+    normalized_decoder: torch.Tensor,
+) -> List[int]:
+    """Sort ``feature_ids`` by decreasing max cosine similarity to any seed column.
+
+    Assumes decoder columns are L2-normalized (see :func:`normalize_decoder_weights`).
+    For each feature index ``f``, score is ``max_s cos(dec[:,s], dec[:,f])`` over seeds ``s``.
+    Ties break by ascending feature id.
+    """
+    if not feature_ids:
+        return []
+    fids = [int(x) for x in feature_ids]
+    seeds = sorted({int(s) for s in seed_feature_ids})
+    if not seeds:
+        return sorted(fids)
+    device = normalized_decoder.device
+    dec = normalized_decoder
+    si = torch.tensor(seeds, dtype=torch.long, device=device)
+    fi = torch.tensor(fids, dtype=torch.long, device=device)
+    seed_vecs = dec[:, si]
+    feat_vecs = dec[:, fi]
+    sims = torch.matmul(seed_vecs.T, feat_vecs)
+    max_sims = sims.max(dim=0).values
+    order = sorted(
+        range(len(fids)),
+        key=lambda i: (-float(max_sims[i].item()), fids[i]),
+    )
+    return [fids[i] for i in order]
 
 
 def expand_features_with_similarity(
@@ -267,6 +300,7 @@ def select_features_to_ablate(
             feature_set.update(top_k_ids)
         features = sorted(feature_set)
         validate_feature_ids(features, sae_latent_dim, "union_top_k features")
+        union_seeds = list(features)
         if similarity_enabled:
             if normalized_decoder is None:
                 raise ValueError("similarity_enabled requires normalized_decoder")
@@ -289,6 +323,7 @@ def select_features_to_ablate(
                 similarity_cache,
                 active_latent_mask=active_mask,
             )
+            return features, union_seeds
         return features, None
     if mode == "per_sample_top_k":
         return None, None
@@ -827,6 +862,7 @@ __all__ = [
     "validate_feature_ids",
     "normalize_decoder_weights",
     "baseline_active_latent_mask",
+    "sort_features_by_max_seed_similarity",
     "expand_features_with_similarity",
     "inference_indices_random",
     "resolve_inference_sample_indices",
