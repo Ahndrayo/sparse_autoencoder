@@ -1,10 +1,13 @@
 """Ablation experiment utilities for SAE feature intervention."""
 
+import warnings
 import numpy as np
 import torch
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 from sklearn.model_selection import StratifiedKFold
+
+from utils.analysis import FeatureStatsAggregator
 
 # How many top SAE latents (by max activation over tokens) to store per headline in baseline_headlines.
 HEADLINE_SAE_TOP_K = 64
@@ -98,27 +101,68 @@ def normalize_decoder_weights(sae, device: torch.device):
     return decoder / norms
 
 
+def baseline_active_latent_mask(
+    feature_stats_baseline: FeatureStatsAggregator,
+    latent_dim: int,
+    device: torch.device,
+) -> torch.Tensor:
+    """Bool mask [latent_dim]: True where baseline run saw at least one positive activation."""
+    stats = feature_stats_baseline.get_stats()
+    max_act = np.asarray(stats["max_activations"], dtype=np.float64)
+    if max_act.shape[0] != latent_dim:
+        raise ValueError(
+            f"feature_stats_baseline max_activations length {max_act.shape[0]} != latent_dim {latent_dim}"
+        )
+    return torch.as_tensor(max_act > 1e-12, dtype=torch.bool, device=device)
+
+
 def expand_features_with_similarity(
     feature_ids: List[int],
     normalized_decoder: torch.Tensor,
     top_m: int,
     cache: Dict[int, List[int]],
+    active_latent_mask: Optional[torch.Tensor] = None,
 ) -> List[int]:
-    """Expand features using cosine similarity between decoder columns."""
+    """Expand features using cosine similarity between decoder columns.
+
+    If ``active_latent_mask`` is provided (bool, shape ``[latent_dim]``), inactive
+    latents are excluded from the ranking (similarity set to -inf). The current
+    seed index is always kept eligible so self-similarity can appear in the top-k.
+    When ``active_latent_mask`` is not ``None``, ``cache`` is neither read nor
+    written (cached lists would mix masked and unmasked rankings).
+    """
     if not feature_ids:
         return []
-    top_m = min(int(top_m), normalized_decoder.shape[1])
+    d = int(normalized_decoder.shape[1])
+    top_m = min(int(top_m), d)
+    if top_m < 1:
+        return sorted({int(x) for x in feature_ids})
+    use_mask = active_latent_mask is not None
     expanded = set()
     for fid in feature_ids:
         fid = int(fid)
-        if fid in cache and len(cache[fid]) >= top_m:
+        if not use_mask and fid in cache and len(cache[fid]) >= top_m:
             similar = cache[fid][:top_m]
         else:
             seed_vec = normalized_decoder[:, fid]
             sims = torch.matmul(seed_vec, normalized_decoder)
-            topk = torch.topk(sims, k=top_m).indices.tolist()
-            cache[fid] = topk
-            similar = topk
+            if use_mask:
+                m = active_latent_mask.to(device=sims.device, dtype=torch.bool)
+                if m.shape[0] != sims.shape[0]:
+                    raise ValueError(
+                        f"active_latent_mask length {m.shape[0]} != similarity length {sims.shape[0]}"
+                    )
+                m = m.clone()
+                m[fid] = True
+                sims = sims.masked_fill(~m, float("-inf"))
+            n_valid = int(torch.isfinite(sims).sum().item())
+            k_take = min(top_m, n_valid)
+            if k_take <= 0:
+                similar = []
+            else:
+                similar = torch.topk(sims, k=k_take).indices.tolist()
+            if not use_mask:
+                cache[fid] = similar
         expanded.update(similar)
     return sorted(expanded)
 
@@ -182,6 +226,7 @@ def select_features_to_ablate(
     normalized_decoder: Optional[torch.Tensor],
     similarity_top_m: int,
     similarity_cache: Dict[int, List[int]],
+    feature_stats_baseline: Optional[FeatureStatsAggregator] = None,
 ) -> Tuple[Optional[List[int]], Optional[List[int]]]:
     """Global feature list after baseline (same logic as the notebook Feature Selection cell)."""
     mode = ablation_config["mode"]
@@ -192,8 +237,24 @@ def select_features_to_ablate(
         if similarity_enabled:
             if normalized_decoder is None:
                 raise ValueError("similarity_enabled requires normalized_decoder")
+            if feature_stats_baseline is None:
+                warnings.warn(
+                    "similarity_enabled but feature_stats_baseline is None: "
+                    "similarity expansion includes all decoder columns (dead latents possible).",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            active_mask = (
+                baseline_active_latent_mask(feature_stats_baseline, sae_latent_dim, normalized_decoder.device)
+                if feature_stats_baseline is not None
+                else None
+            )
             features = expand_features_with_similarity(
-                features, normalized_decoder, similarity_top_m, similarity_cache
+                features,
+                normalized_decoder,
+                similarity_top_m,
+                similarity_cache,
+                active_latent_mask=active_mask,
             )
         return features, original
     if mode == "union_top_k":
@@ -209,8 +270,24 @@ def select_features_to_ablate(
         if similarity_enabled:
             if normalized_decoder is None:
                 raise ValueError("similarity_enabled requires normalized_decoder")
+            if feature_stats_baseline is None:
+                warnings.warn(
+                    "similarity_enabled but feature_stats_baseline is None: "
+                    "similarity expansion includes all decoder columns (dead latents possible).",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            active_mask = (
+                baseline_active_latent_mask(feature_stats_baseline, sae_latent_dim, normalized_decoder.device)
+                if feature_stats_baseline is not None
+                else None
+            )
             features = expand_features_with_similarity(
-                features, normalized_decoder, similarity_top_m, similarity_cache
+                features,
+                normalized_decoder,
+                similarity_top_m,
+                similarity_cache,
+                active_latent_mask=active_mask,
             )
         return features, None
     if mode == "per_sample_top_k":
@@ -449,6 +526,7 @@ def run_ablation_inference(
     similarity_cache: Dict[int, List[int]],
     parent_features_to_ablate: Optional[List[int]] = None,
     sample_indices: Optional[Sequence[int]] = None,
+    feature_stats_baseline: Optional[FeatureStatsAggregator] = None,
 ) -> Tuple[List[Dict], List[Dict], Dict[str, List[int]], set, float]:
     """Run ablation inference with feature intervention."""
     skip_hooks = ablation_config.get("skip_sae_reconstruction", False)
@@ -459,6 +537,20 @@ def run_ablation_inference(
     all_ablated_features_set = set()
     iter_indices = resolve_inference_sample_indices(len(test_ds), max_samples, sample_indices)
     n_iter = len(iter_indices)
+
+    similarity_active_mask: Optional[torch.Tensor] = None
+    if similarity_enabled and ablation_config.get("mode") == "per_sample_top_k":
+        if feature_stats_baseline is not None:
+            similarity_active_mask = baseline_active_latent_mask(
+                feature_stats_baseline, int(sae.latent_dim), device
+            )
+        else:
+            warnings.warn(
+                "similarity_enabled (per_sample_top_k) but feature_stats_baseline is None: "
+                "similarity expansion includes all decoder columns (dead latents possible).",
+                UserWarning,
+                stacklevel=2,
+            )
 
     if not skip_hooks and ablation_config["mode"] != "per_sample_top_k":
         target_layer = model.bert.encoder.layer[layer_to_extract]
@@ -497,7 +589,11 @@ def run_ablation_inference(
                 if similarity_enabled:
                     original_count = len(features_to_ablate_sample)
                     features_to_ablate_sample = expand_features_with_similarity(
-                        features_to_ablate_sample, normalized_decoder, similarity_top_m, similarity_cache
+                        features_to_ablate_sample,
+                        normalized_decoder,
+                        similarity_top_m,
+                        similarity_cache,
+                        active_latent_mask=similarity_active_mask,
                     )
                     similarity_stats["original_counts"].append(original_count)
                     similarity_stats["expanded_counts"].append(len(features_to_ablate_sample))
@@ -730,6 +826,7 @@ __all__ = [
     "create_intervention_hook",
     "validate_feature_ids",
     "normalize_decoder_weights",
+    "baseline_active_latent_mask",
     "expand_features_with_similarity",
     "inference_indices_random",
     "resolve_inference_sample_indices",
