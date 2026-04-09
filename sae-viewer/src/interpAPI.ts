@@ -97,6 +97,20 @@ export async function fetchMetadata(): Promise<{
   return res.json();
 }
 
+export async function fetchFeatureCns(
+  featureId: number
+): Promise<{ feature_id: number; avg_cns: number | null }> {
+  const url = new URL(`${API_BASE}/api/feature_cns`);
+  url.searchParams.set("id", String(featureId));
+  const res = await fetch(url.toString(), {
+    headers: { Accept: "application/json" },
+  });
+  if (!res.ok) {
+    throw new Error(`Failed to load feature CNS: ${res.statusText}`);
+  }
+  return res.json();
+}
+
 // interpretability endpoints (LLM explanation + evaluation)
 export async function fetchInterpretabilityFeatures(): Promise<{
   features: Array<{

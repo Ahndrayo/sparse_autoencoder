@@ -334,6 +334,7 @@ class HeadlineFeatureAggregator:
             "correct": ablated_correct,
             "num_tokens": int(token_activations.shape[0]),
             "features": features,
+            "ablated_features": sorted(int(fid) for fid in ablated_set),
             "num_ablated_features": int(num_ablated_features),
             "total_baseline_features": int(total_baseline_features),
             "ablation_fraction": float(ablation_fraction)

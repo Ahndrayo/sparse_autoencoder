@@ -447,6 +447,7 @@ def run_ablation_inference(
     normalized_decoder: torch.Tensor,
     similarity_top_m: int,
     similarity_cache: Dict[int, List[int]],
+    parent_features_to_ablate: Optional[List[int]] = None,
     sample_indices: Optional[Sequence[int]] = None,
 ) -> Tuple[List[Dict], List[Dict], Dict[str, List[int]], set, float]:
     """Run ablation inference with feature intervention."""
@@ -484,12 +485,14 @@ def run_ablation_inference(
 
             inputs = inputs.to(device)
             features_to_ablate_sample = None
+            parent_features_to_ablate_sample = None
 
             if not skip_hooks and ablation_config["mode"] == "per_sample_top_k":
-                features_to_ablate_sample = [
+                parent_features_to_ablate_sample = [
                     f["feature_id"]
                     for f in baseline_features_map[pos]["top_features"][: ablation_config["k"]]
                 ]
+                features_to_ablate_sample = list(parent_features_to_ablate_sample)
                 validate_feature_ids(features_to_ablate_sample, sae.latent_dim, "per_sample_top_k features")
                 if similarity_enabled:
                     original_count = len(features_to_ablate_sample)
@@ -532,15 +535,17 @@ def run_ablation_inference(
             confidence = probs[0, pred_id].item()
 
             if ablation_config["mode"] == "per_sample_top_k":
-                if features_to_ablate_sample is not None:
-                    features_ablated_for_this_sample = features_to_ablate_sample
+                if parent_features_to_ablate_sample is not None:
+                    features_ablated_for_this_sample = parent_features_to_ablate_sample
                 else:
                     features_ablated_for_this_sample = [
                         f["feature_id"]
                         for f in baseline_features_map[pos]["top_features"][: ablation_config["k"]]
                     ]
             else:
-                features_ablated_for_this_sample = features_to_ablate
+                features_ablated_for_this_sample = (
+                    parent_features_to_ablate if parent_features_to_ablate is not None else features_to_ablate
+                )
 
             ablated_results.append(
                 {
@@ -588,7 +593,11 @@ def run_ablation_inference(
                     if ablation_config["mode"] == "per_sample_top_k":
                         features_for_tracking = features_ablated_for_this_sample
                     else:
-                        features_for_tracking = features_to_ablate
+                        features_for_tracking = (
+                            parent_features_to_ablate
+                            if parent_features_to_ablate is not None
+                            else features_to_ablate
+                        )
 
                     headline_aggregator_ablated.add_headline_with_ablation_metrics(
                         prompt_idx=pos,
