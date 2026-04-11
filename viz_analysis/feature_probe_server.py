@@ -47,6 +47,7 @@ class FeatureProbeData:
     feature_metrics_map_baseline: dict[int, dict[str, float]]
     headline_features: list[dict[str, Any]]
     baseline_headline_features: list[dict[str, Any]] | None
+    avg_cns_by_feature: dict[int, float]
     interpretability_results: list[dict[str, Any]]
     interpretability_by_feature: dict[str, dict[str, Any]]
 
@@ -180,6 +181,27 @@ class FeatureProbeData:
             with open(baseline_headlines_path, "r", encoding="utf-8") as f:
                 baseline_headline_features = json.load(f)
 
+        # Per-feature CNS over headlines where the feature was actually ablated.
+        cns_sums: dict[int, float] = {}
+        cns_counts: dict[int, int] = {}
+        for row in headline_features:
+            cns_val = row.get("cns")
+            ablated_features = row.get("ablated_features")
+            if not isinstance(cns_val, (int, float)) or not isinstance(ablated_features, list):
+                continue
+            for fid in ablated_features:
+                try:
+                    fid_int = int(fid)
+                except Exception:  # noqa: BLE001
+                    continue
+                cns_sums[fid_int] = cns_sums.get(fid_int, 0.0) + float(cns_val)
+                cns_counts[fid_int] = cns_counts.get(fid_int, 0) + 1
+        avg_cns_by_feature = {
+            fid: (cns_sums[fid] / cns_counts[fid])
+            for fid in cns_sums
+            if cns_counts.get(fid, 0) > 0
+        }
+
         interpretability_path = run_path / "interpretability_llm_results.json"
         interpretability_results: list[dict[str, Any]] = []
         interpretability_by_feature: dict[str, dict[str, Any]] = {}
@@ -221,6 +243,7 @@ class FeatureProbeData:
             feature_metrics_map_baseline=feature_metrics_map_baseline,
             headline_features=headline_features,
             baseline_headline_features=baseline_headline_features,
+            avg_cns_by_feature=avg_cns_by_feature,
             interpretability_results=interpretability_results,
             interpretability_by_feature=interpretability_by_feature,
         )
@@ -305,7 +328,16 @@ class FeatureProbeData:
             )
         top_features = metrics_block[metric_name].get("top_features", [])
         limit = max(1, min(limit, len(top_features)))
-        return top_features[:limit]
+        enriched: list[dict[str, Any]] = []
+        for entry in top_features[:limit]:
+            e = dict(entry)
+            try:
+                fid = int(e.get("feature_id"))
+            except Exception:  # noqa: BLE001
+                fid = None
+            e["avg_cns"] = self.avg_cns_by_feature.get(fid) if fid is not None else None
+            enriched.append(e)
+        return enriched
 
     def get_feature_tokens(
         self, feature_id: int, top_k: int = 10, variant: str = "ablated"
@@ -412,6 +444,7 @@ class FeatureProbeData:
             "density": density,
             "mean_act": mean_act,
             "mean_act_squared": mean_sq,
+            "avg_cns": self.avg_cns_by_feature.get(feature_id),
             "is_inactive": is_inactive,
             "hist": self._build_hist(feature_id, tokens_dict),
             "top": top_sequences,
@@ -554,6 +587,20 @@ class FeatureProbeRequestHandler(SimpleHTTPRequestHandler):
                     int(feature_id[0]), top_k=top_k, variant=variant
                 )
                 self._send_json(data)
+            except Exception as exc:  # noqa: BLE001
+                self._send_json({"error": str(exc)}, status=400)
+            return
+
+        if parsed.path == "/api/feature_cns":
+            params = parse_qs(parsed.query)
+            feature_id = params.get("id")
+            if feature_id is None:
+                self._send_json({"error": "Missing 'id' query parameter"}, status=400)
+                return
+            try:
+                fid = int(feature_id[0])
+                avg_cns = self.data_store.avg_cns_by_feature.get(fid)
+                self._send_json({"feature_id": fid, "avg_cns": avg_cns})
             except Exception as exc:  # noqa: BLE001
                 self._send_json({"error": str(exc)}, status=400)
             return

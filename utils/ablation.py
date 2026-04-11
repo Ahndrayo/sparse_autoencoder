@@ -1,8 +1,14 @@
 """Ablation experiment utilities for SAE feature intervention."""
 
+import warnings
 import numpy as np
 import torch
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+
+from sklearn.model_selection import StratifiedKFold
+from tqdm.auto import tqdm
+
+from utils.analysis import FeatureStatsAggregator
 
 # How many top SAE latents (by max activation over tokens) to store per headline in baseline_headlines.
 HEADLINE_SAE_TOP_K = 64
@@ -96,29 +102,233 @@ def normalize_decoder_weights(sae, device: torch.device):
     return decoder / norms
 
 
+def baseline_active_latent_mask(
+    feature_stats_baseline: FeatureStatsAggregator,
+    latent_dim: int,
+    device: torch.device,
+) -> torch.Tensor:
+    """Bool mask [latent_dim]: True where baseline run saw at least one positive activation."""
+    stats = feature_stats_baseline.get_stats()
+    # FeatureStatsAggregator.get_stats() uses key "max_activation" (singular)
+    max_act = np.asarray(stats["max_activation"], dtype=np.float64)
+    if max_act.shape[0] != latent_dim:
+        raise ValueError(
+            f"feature_stats_baseline max_activation length {max_act.shape[0]} != latent_dim {latent_dim}"
+        )
+    return torch.as_tensor(max_act > 1e-12, dtype=torch.bool, device=device)
+
+
+def sort_features_by_max_seed_similarity(
+    feature_ids: Sequence[int],
+    seed_feature_ids: Sequence[int],
+    normalized_decoder: torch.Tensor,
+) -> List[int]:
+    """Sort ``feature_ids`` by decreasing max cosine similarity to any seed column.
+
+    Assumes decoder columns are L2-normalized (see :func:`normalize_decoder_weights`).
+    For each feature index ``f``, score is ``max_s cos(dec[:,s], dec[:,f])`` over seeds ``s``.
+    Ties break by ascending feature id.
+    """
+    if not feature_ids:
+        return []
+    fids = [int(x) for x in feature_ids]
+    seeds = sorted({int(s) for s in seed_feature_ids})
+    if not seeds:
+        return sorted(fids)
+    device = normalized_decoder.device
+    dec = normalized_decoder
+    si = torch.tensor(seeds, dtype=torch.long, device=device)
+    fi = torch.tensor(fids, dtype=torch.long, device=device)
+    seed_vecs = dec[:, si]
+    feat_vecs = dec[:, fi]
+    sims = torch.matmul(seed_vecs.T, feat_vecs)
+    max_sims = sims.max(dim=0).values
+    order = sorted(
+        range(len(fids)),
+        key=lambda i: (-float(max_sims[i].item()), fids[i]),
+    )
+    return [fids[i] for i in order]
+
+
 def expand_features_with_similarity(
     feature_ids: List[int],
     normalized_decoder: torch.Tensor,
     top_m: int,
     cache: Dict[int, List[int]],
+    active_latent_mask: Optional[torch.Tensor] = None,
 ) -> List[int]:
-    """Expand features using cosine similarity between decoder columns."""
+    """Expand features using cosine similarity between decoder columns.
+
+    If ``active_latent_mask`` is provided (bool, shape ``[latent_dim]``), inactive
+    latents are excluded from the ranking (similarity set to -inf). The current
+    seed index is always kept eligible so self-similarity can appear in the top-k.
+    When ``active_latent_mask`` is not ``None``, ``cache`` is neither read nor
+    written (cached lists would mix masked and unmasked rankings).
+    """
     if not feature_ids:
         return []
-    top_m = min(int(top_m), normalized_decoder.shape[1])
+    d = int(normalized_decoder.shape[1])
+    top_m = min(int(top_m), d)
+    if top_m < 1:
+        return sorted({int(x) for x in feature_ids})
+    use_mask = active_latent_mask is not None
     expanded = set()
     for fid in feature_ids:
         fid = int(fid)
-        if fid in cache and len(cache[fid]) >= top_m:
+        if not use_mask and fid in cache and len(cache[fid]) >= top_m:
             similar = cache[fid][:top_m]
         else:
             seed_vec = normalized_decoder[:, fid]
             sims = torch.matmul(seed_vec, normalized_decoder)
-            topk = torch.topk(sims, k=top_m).indices.tolist()
-            cache[fid] = topk
-            similar = topk
+            if use_mask:
+                m = active_latent_mask.to(device=sims.device, dtype=torch.bool)
+                if m.shape[0] != sims.shape[0]:
+                    raise ValueError(
+                        f"active_latent_mask length {m.shape[0]} != similarity length {sims.shape[0]}"
+                    )
+                m = m.clone()
+                m[fid] = True
+                sims = sims.masked_fill(~m, float("-inf"))
+            n_valid = int(torch.isfinite(sims).sum().item())
+            k_take = min(top_m, n_valid)
+            if k_take <= 0:
+                similar = []
+            else:
+                similar = torch.topk(sims, k=k_take).indices.tolist()
+            if not use_mask:
+                cache[fid] = similar
         expanded.update(similar)
     return sorted(expanded)
+
+
+def inference_indices_random(dataset_len: int, max_samples: int, seed: int) -> List[int]:
+    """Deterministic subset of row indices: same (len, max_samples, seed) always returns the same list."""
+    n = int(dataset_len)
+    k = min(int(max_samples), n)
+    if k <= 0:
+        return []
+    rng = np.random.default_rng(seed)
+    return [int(x) for x in rng.choice(n, size=k, replace=False)]
+
+
+def resolve_inference_sample_indices(
+    dataset_len: int,
+    max_samples: int,
+    sample_indices: Optional[Sequence[int]] = None,
+) -> List[int]:
+    """Build ordered list of dataset row indices for inference. None => first min(max_samples, len) rows."""
+    n = int(dataset_len)
+    if sample_indices is None:
+        return list(range(min(int(max_samples), n)))
+    out = [int(i) for i in sample_indices]
+    seen = set()
+    for i in out:
+        if i < 0 or i >= n:
+            raise ValueError(f"sample index {i} out of range for dataset length {n}")
+        if i in seen:
+            raise ValueError("sample_indices must be unique")
+        seen.add(i)
+    return out
+
+
+def stratified_k_fold_indices(
+    labels: Sequence[Union[int, float]],
+    n_splits: int,
+    *,
+    shuffle: bool = True,
+    random_state: int,
+) -> List[List[int]]:
+    """Stratified K-fold row indices. Reproducible for fixed (labels, n_splits, shuffle, random_state)."""
+    y = np.asarray(labels)
+    n = int(y.shape[0])
+    k = int(n_splits)
+    if k < 2:
+        raise ValueError("n_splits must be >= 2")
+    if n < k:
+        raise ValueError(f"Need at least n_splits={k} samples, got n={n}")
+    X = np.zeros((n, 1), dtype=np.float32)
+    skf = StratifiedKFold(n_splits=k, shuffle=shuffle, random_state=random_state)
+    return [[int(i) for i in test_idx] for _, test_idx in skf.split(X, y)]
+
+
+def select_features_to_ablate(
+    ablation_config: Dict[str, Any],
+    baseline_features_map: Dict[int, Any],
+    sae_latent_dim: int,
+    manual_features: List[int],
+    similarity_enabled: bool,
+    normalized_decoder: Optional[torch.Tensor],
+    similarity_top_m: int,
+    similarity_cache: Dict[int, List[int]],
+    feature_stats_baseline: Optional[FeatureStatsAggregator] = None,
+) -> Tuple[Optional[List[int]], Optional[List[int]]]:
+    """Global feature list after baseline (same logic as the notebook Feature Selection cell)."""
+    mode = ablation_config["mode"]
+    if mode == "manual":
+        features = list(manual_features)
+        original = list(manual_features)
+        validate_feature_ids(features, sae_latent_dim, "manual features")
+        if similarity_enabled:
+            if normalized_decoder is None:
+                raise ValueError("similarity_enabled requires normalized_decoder")
+            if feature_stats_baseline is None:
+                warnings.warn(
+                    "similarity_enabled but feature_stats_baseline is None: "
+                    "similarity expansion includes all decoder columns (dead latents possible).",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            active_mask = (
+                baseline_active_latent_mask(feature_stats_baseline, sae_latent_dim, normalized_decoder.device)
+                if feature_stats_baseline is not None
+                else None
+            )
+            features = expand_features_with_similarity(
+                features,
+                normalized_decoder,
+                similarity_top_m,
+                similarity_cache,
+                active_latent_mask=active_mask,
+            )
+        return features, original
+    if mode == "union_top_k":
+        feature_set = set()
+        kk = int(ablation_config["k"])
+        for pos in baseline_features_map:
+            top_k_ids = [
+                f["feature_id"] for f in baseline_features_map[pos]["top_features"][:kk]
+            ]
+            feature_set.update(top_k_ids)
+        features = sorted(feature_set)
+        validate_feature_ids(features, sae_latent_dim, "union_top_k features")
+        union_seeds = list(features)
+        if similarity_enabled:
+            if normalized_decoder is None:
+                raise ValueError("similarity_enabled requires normalized_decoder")
+            if feature_stats_baseline is None:
+                warnings.warn(
+                    "similarity_enabled but feature_stats_baseline is None: "
+                    "similarity expansion includes all decoder columns (dead latents possible).",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            active_mask = (
+                baseline_active_latent_mask(feature_stats_baseline, sae_latent_dim, normalized_decoder.device)
+                if feature_stats_baseline is not None
+                else None
+            )
+            features = expand_features_with_similarity(
+                features,
+                normalized_decoder,
+                similarity_top_m,
+                similarity_cache,
+                active_latent_mask=active_mask,
+            )
+            return features, union_seeds
+        return features, None
+    if mode == "per_sample_top_k":
+        return None, None
+    raise ValueError(f"Unknown ablation mode: {mode}")
 
 
 def run_baseline_inference(
@@ -133,8 +343,12 @@ def run_baseline_inference(
     interpretability_recorder=None,
     feature_stats_baseline=None,
     top_token_tracker_baseline=None,
+    sample_indices: Optional[Sequence[int]] = None,
+    show_progress: bool = True,
 ) -> Tuple[List[Dict], Dict, float, List[Dict[str, Any]], np.ndarray]:
     """Run baseline inference without ablation.
+
+    Uses a tqdm progress bar over samples when ``show_progress`` is True.
 
     Returns:
         baseline_sae_max_full: float32 array of shape (n_samples, latent_dim). Per sample, each
@@ -150,11 +364,18 @@ def run_baseline_inference(
         if enc_w is not None:
             latent_dim = int(enc_w.shape[0])
     target_layer = model.bert.encoder.layer[layer_to_extract]
+    iter_indices = resolve_inference_sample_indices(len(test_ds), max_samples, sample_indices)
+    n_iter = len(iter_indices)
 
     with torch.no_grad():
-        for idx, sample in enumerate(test_ds):
-            if idx >= max_samples:
-                break
+        for pos, sample_idx in tqdm(
+            enumerate(iter_indices),
+            total=n_iter,
+            desc="Baseline",
+            leave=True,
+            disable=not show_progress,
+        ):
+            sample = test_ds[sample_idx]
 
             text = sample["text"]
             true_label = sample["label"]
@@ -175,7 +396,7 @@ def run_baseline_inference(
 
             baseline_results.append(
                 {
-                    "sample_idx": idx,
+                    "sample_idx": sample_idx,
                     "text": text,
                     "true_label": model.config.id2label[true_label],
                     "predicted_label": pred_label,
@@ -224,7 +445,7 @@ def run_baseline_inference(
                         top_token_tracker_baseline.update(
                             sae_features_cpu,
                             filtered_token_ids,
-                            prompt_idx=idx,
+                            prompt_idx=pos,
                             prompt_text=text,
                             prompt_tokens=filtered_prompt_tokens,
                             predicted_label=pred_label,
@@ -240,7 +461,7 @@ def run_baseline_inference(
                         for fid in top_10_indices
                     ]
                     total_activation = sum(feat["activation"] for feat in top_features)
-                    baseline_features_map[idx] = {
+                    baseline_features_map[pos] = {
                         "top_features": top_features,
                         "total_activation": total_activation,
                     }
@@ -258,7 +479,7 @@ def run_baseline_inference(
                     ]
                     baseline_headlines.append(
                         {
-                            "row_id": int(idx),
+                            "row_id": int(pos),
                             "prompt": text,
                             "predicted_label": pred_label,
                             "confidence": float(confidence),
@@ -275,10 +496,10 @@ def run_baseline_inference(
                     if interpretability_recorder is not None:
                         interpretability_recorder.update(sae_features_cpu, filtered_token_ids)
                 else:
-                    baseline_features_map[idx] = {"top_features": [], "total_activation": 0.0}
+                    baseline_features_map[pos] = {"top_features": [], "total_activation": 0.0}
                     baseline_headlines.append(
                         {
-                            "row_id": int(idx),
+                            "row_id": int(pos),
                             "prompt": text,
                             "predicted_label": pred_label,
                             "confidence": float(confidence),
@@ -293,10 +514,10 @@ def run_baseline_inference(
                         np.zeros(latent_dim, dtype=np.float32) if latent_dim > 0 else np.array([], dtype=np.float32)
                     )
             else:
-                baseline_features_map[idx] = {"top_features": [], "total_activation": 0.0}
+                baseline_features_map[pos] = {"top_features": [], "total_activation": 0.0}
                 baseline_headlines.append(
                     {
-                        "row_id": int(idx),
+                        "row_id": int(pos),
                         "prompt": text,
                         "predicted_label": pred_label,
                         "confidence": float(confidence),
@@ -310,9 +531,6 @@ def run_baseline_inference(
                 baseline_sae_max_rows.append(
                     np.zeros(latent_dim, dtype=np.float32) if latent_dim > 0 else np.array([], dtype=np.float32)
                 )
-
-            if (idx + 1) % 20 == 0:
-                print(f"  Baseline: {idx + 1}/{min(max_samples, len(test_ds))} samples")
 
     baseline_accuracy = (
         sum(1 for r in baseline_results if r["predicted_id"] == test_ds[r["sample_idx"]]["label"])
@@ -348,14 +566,43 @@ def run_ablation_inference(
     normalized_decoder: torch.Tensor,
     similarity_top_m: int,
     similarity_cache: Dict[int, List[int]],
+    parent_features_to_ablate: Optional[List[int]] = None,
+    sample_indices: Optional[Sequence[int]] = None,
+    feature_stats_baseline: Optional[FeatureStatsAggregator] = None,
+    show_progress: bool = True,
+    baseline_sae_max_full: Optional[np.ndarray] = None,
 ) -> Tuple[List[Dict], List[Dict], Dict[str, List[int]], set, float]:
-    """Run ablation inference with feature intervention."""
+    """Run ablation inference with feature intervention.
+
+    Uses a tqdm progress bar over samples when ``show_progress`` is True.
+
+    ``baseline_sae_max_full`` (optional): array of shape ``(n_samples, latent_dim)`` aligned with
+    the same sample order as this run (row ``pos``). When provided, headline ``ablation_fraction``
+    uses the sum of baseline max activations over **all** ablated feature ids, not only those in
+    the stored baseline top-k list.
+    """
     skip_hooks = ablation_config.get("skip_sae_reconstruction", False)
     ablated_results = []
     all_prompt_metadata_ablated = []
     baseline_lookup = {r["sample_idx"]: r for r in baseline_results}
     similarity_stats = {"original_counts": [], "expanded_counts": []}
     all_ablated_features_set = set()
+    iter_indices = resolve_inference_sample_indices(len(test_ds), max_samples, sample_indices)
+    n_iter = len(iter_indices)
+
+    similarity_active_mask: Optional[torch.Tensor] = None
+    if similarity_enabled and ablation_config.get("mode") == "per_sample_top_k":
+        if feature_stats_baseline is not None:
+            similarity_active_mask = baseline_active_latent_mask(
+                feature_stats_baseline, int(sae.latent_dim), device
+            )
+        else:
+            warnings.warn(
+                "similarity_enabled (per_sample_top_k) but feature_stats_baseline is None: "
+                "similarity expansion includes all decoder columns (dead latents possible).",
+                UserWarning,
+                stacklevel=2,
+            )
 
     if not skip_hooks and ablation_config["mode"] != "per_sample_top_k":
         target_layer = model.bert.encoder.layer[layer_to_extract]
@@ -363,9 +610,14 @@ def run_ablation_inference(
         hook_handle = target_layer.register_forward_hook(intervention_hook)
 
     with torch.no_grad():
-        for idx, sample in enumerate(test_ds):
-            if idx >= max_samples:
-                break
+        for pos, sample_idx in tqdm(
+            enumerate(iter_indices),
+            total=n_iter,
+            desc="Ablation",
+            leave=True,
+            disable=not show_progress,
+        ):
+            sample = test_ds[sample_idx]
 
             text = sample["text"]
             true_label = sample["label"]
@@ -383,17 +635,23 @@ def run_ablation_inference(
 
             inputs = inputs.to(device)
             features_to_ablate_sample = None
+            parent_features_to_ablate_sample = None
 
             if not skip_hooks and ablation_config["mode"] == "per_sample_top_k":
-                features_to_ablate_sample = [
+                parent_features_to_ablate_sample = [
                     f["feature_id"]
-                    for f in baseline_features_map[idx]["top_features"][: ablation_config["k"]]
+                    for f in baseline_features_map[pos]["top_features"][: ablation_config["k"]]
                 ]
+                features_to_ablate_sample = list(parent_features_to_ablate_sample)
                 validate_feature_ids(features_to_ablate_sample, sae.latent_dim, "per_sample_top_k features")
                 if similarity_enabled:
                     original_count = len(features_to_ablate_sample)
                     features_to_ablate_sample = expand_features_with_similarity(
-                        features_to_ablate_sample, normalized_decoder, similarity_top_m, similarity_cache
+                        features_to_ablate_sample,
+                        normalized_decoder,
+                        similarity_top_m,
+                        similarity_cache,
+                        active_latent_mask=similarity_active_mask,
                     )
                     similarity_stats["original_counts"].append(original_count)
                     similarity_stats["expanded_counts"].append(len(features_to_ablate_sample))
@@ -410,7 +668,7 @@ def run_ablation_inference(
             current_sample_data["token_ids"] = token_ids
             current_sample_data["prompt_tokens"] = prompt_tokens
             current_sample_data["text"] = text
-            current_sample_data["idx"] = idx
+            current_sample_data["idx"] = pos
 
             outputs = model(**inputs)
             logits = outputs.logits
@@ -431,19 +689,22 @@ def run_ablation_inference(
             confidence = probs[0, pred_id].item()
 
             if ablation_config["mode"] == "per_sample_top_k":
-                if features_to_ablate_sample is not None:
-                    features_ablated_for_this_sample = features_to_ablate_sample
+                if parent_features_to_ablate_sample is not None:
+                    features_ablated_for_this_sample = parent_features_to_ablate_sample
                 else:
                     features_ablated_for_this_sample = [
                         f["feature_id"]
-                        for f in baseline_features_map[idx]["top_features"][: ablation_config["k"]]
+                        for f in baseline_features_map[pos]["top_features"][: ablation_config["k"]]
                     ]
             else:
-                features_ablated_for_this_sample = features_to_ablate
+                # Full expanded list matches what the intervention hook zeroes (group / global ablation).
+                features_ablated_for_this_sample = (
+                    list(features_to_ablate) if features_to_ablate is not None else []
+                )
 
             ablated_results.append(
                 {
-                    "sample_idx": idx,
+                    "sample_idx": sample_idx,
                     "text": text,
                     "true_label": model.config.id2label[true_label],
                     "predicted_label": pred_label,
@@ -476,21 +737,27 @@ def run_ablation_inference(
                     top_token_tracker_ablated.update(
                         sae_features_filtered,
                         filtered_token_ids,
-                        prompt_idx=idx,
+                        prompt_idx=pos,
                         prompt_text=text,
                         prompt_tokens=filtered_prompt_tokens,
                         predicted_label=pred_label,
                         true_label=model.config.id2label[true_label],
                     )
 
-                    baseline_data = baseline_lookup[idx]
+                    baseline_data = baseline_lookup[sample_idx]
                     if ablation_config["mode"] == "per_sample_top_k":
                         features_for_tracking = features_ablated_for_this_sample
                     else:
-                        features_for_tracking = features_to_ablate
+                        features_for_tracking = (
+                            list(features_to_ablate) if features_to_ablate is not None else []
+                        )
+
+                    baseline_sae_row = None
+                    if baseline_sae_max_full is not None and pos < int(baseline_sae_max_full.shape[0]):
+                        baseline_sae_row = baseline_sae_max_full[pos]
 
                     headline_aggregator_ablated.add_headline_with_ablation_metrics(
-                        prompt_idx=idx,
+                        prompt_idx=pos,
                         prompt_text=text,
                         token_activations=sae_features_filtered,
                         token_ids=filtered_token_ids,
@@ -498,15 +765,19 @@ def run_ablation_inference(
                         predicted_label=pred_label,
                         true_label=model.config.id2label[true_label],
                         confidence=confidence,
-                        baseline_features=baseline_features_map[idx],
+                        baseline_features=baseline_features_map[pos],
                         features_to_ablate=features_for_tracking,
                         baseline_prediction=baseline_data["predicted_label"],
                         baseline_confidence=baseline_data["confidence"],
+                        seed_features=parent_features_to_ablate
+                        if ablation_config["mode"] != "per_sample_top_k"
+                        else None,
+                        baseline_sae_max_per_latent=baseline_sae_row,
                     )
 
                     all_prompt_metadata_ablated.append(
                         {
-                            "row_id": idx,
+                            "row_id": pos,
                             "seq_len": seq_len,
                             "prompt": text,
                             "predicted_label": pred_label,
@@ -514,9 +785,6 @@ def run_ablation_inference(
                             "correct": pred_id == true_label,
                         }
                     )
-
-            if (idx + 1) % 20 == 0:
-                print(f"  Ablated: {idx + 1}/{min(max_samples, len(test_ds))} samples")
 
     if not skip_hooks and ablation_config["mode"] != "per_sample_top_k":
         hook_handle.remove()
@@ -620,7 +888,13 @@ __all__ = [
     "create_intervention_hook",
     "validate_feature_ids",
     "normalize_decoder_weights",
+    "baseline_active_latent_mask",
+    "sort_features_by_max_seed_similarity",
     "expand_features_with_similarity",
+    "inference_indices_random",
+    "resolve_inference_sample_indices",
+    "stratified_k_fold_indices",
+    "select_features_to_ablate",
     "run_baseline_inference",
     "run_ablation_inference",
     "find_flipped_predictions",

@@ -142,6 +142,8 @@ Transcripts
 Transcripts_Abridged
 transcript_comparison.txt
 Financial\ Articles\ Dataset
+ablation_results/
+ablation_results_multi_fold/
 
 # Data from finetuning model and SAE
 finbert_twitter_ft/

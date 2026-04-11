@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from "react";
 import FeatureInfo from "./featureInfo";
-import { fetchFeatures, fetchMetadata } from "../interpAPI";
+import { fetchFeatureCns, fetchFeatures, fetchMetadata } from "../interpAPI";
 
 type Props = {
   initialFeatureId?: number | null;
@@ -35,6 +35,7 @@ export default function FeaturesView({ initialFeatureId, onClearSearch }: Props)
   const initialFeatureRef = useRef<number | null>(initialFeatureId ?? null);
   const [hasBaselineTokens, setHasBaselineTokens] = useState(false);
   const [tokenVariant, setTokenVariant] = useState<"baseline" | "ablated">("ablated");
+  const [selectedAvgCns, setSelectedAvgCns] = useState<number | null>(null);
 
   useEffect(() => {
     fetchMetadata()
@@ -116,6 +117,10 @@ export default function FeaturesView({ initialFeatureId, onClearSearch }: Props)
       : null;
 
   const featureRows = payload?.features || [];
+  const selectedFeatureRow =
+    selectedFeatureId !== null
+      ? featureRows.find((f) => f.feature_id === selectedFeatureId)
+      : null;
   const visibleRows = featureRows.filter((feat) => {
     const metrics = feat.metrics || {};
     const frac = metrics.fraction_active ?? 0;
@@ -123,6 +128,35 @@ export default function FeaturesView({ initialFeatureId, onClearSearch }: Props)
     // "Dead" latent features never fired (no positive activations) in this run.
     return !(frac === 0 && maxAct === 0);
   });
+
+  useEffect(() => {
+    let cancelled = false;
+    if (selectedFeatureId === null) {
+      setSelectedAvgCns(null);
+      return;
+    }
+
+    // Fast path when selected feature is in current top-N payload.
+    if (selectedFeatureRow && typeof selectedFeatureRow.avg_cns === "number") {
+      setSelectedAvgCns(selectedFeatureRow.avg_cns);
+    } else {
+      setSelectedAvgCns(null);
+    }
+
+    // Always fetch independently so searched features outside top-N still show Avg CNS.
+    fetchFeatureCns(selectedFeatureId)
+      .then((d) => {
+        if (cancelled) return;
+        setSelectedAvgCns(typeof d.avg_cns === "number" ? d.avg_cns : null);
+      })
+      .catch(() => {
+        if (!cancelled) setSelectedAvgCns(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedFeatureId, selectedFeatureRow]);
 
   return (
     <div className="app-shell">
@@ -261,6 +295,14 @@ export default function FeaturesView({ initialFeatureId, onClearSearch }: Props)
               ? `Feature ${selectedFeatureId}`
               : "Select a feature"}
           </h2>
+          {selectedFeatureId !== null && (
+            <p className="metric-description">
+              Avg CNS:{" "}
+              {selectedAvgCns !== null
+                ? `${selectedAvgCns >= 0 ? "+" : ""}${selectedAvgCns.toFixed(3)}`
+                : "—"}
+            </p>
+          )}
           {payload?.metric && payload.metric_descriptions[payload.metric] && (
             <p className="metric-description">
               {payload.metric_descriptions[payload.metric]}
