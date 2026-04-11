@@ -251,7 +251,9 @@ class HeadlineFeatureAggregator:
         baseline_features: dict,
         features_to_ablate: List[int],
         baseline_prediction: str,
-        baseline_confidence: float
+        baseline_confidence: float,
+        seed_features: Optional[List[int]] = None,
+        baseline_sae_max_per_latent: Optional[np.ndarray] = None,
     ):
         """
         Aggregate features with ablation comparison metrics.
@@ -259,7 +261,11 @@ class HeadlineFeatureAggregator:
         Args:
             baseline_features: Dict with 'top_features' (list of {feature_id, activation}) 
                               and 'total_activation' (sum of top-10 activations)
-            features_to_ablate: List of feature IDs that were ablated
+            features_to_ablate: Feature IDs actually zeroed in the model (full expanded set for group ablation).
+            seed_features: Optional original seeds before similarity expansion (for metadata only).
+            baseline_sae_max_per_latent: Optional length-``latent_dim`` vector of baseline max activations
+                per latent for this headline. When set, ``ablation_fraction`` numerator sums these values
+                over every ablated feature id; otherwise numerator uses only overlap with baseline top-k.
         """
         if token_activations.size == 0:
             return
@@ -305,20 +311,28 @@ class HeadlineFeatureAggregator:
         num_ablated_features = len(baseline_feature_ids & ablated_set)
         total_baseline_features = len(baseline_top_features)
         
-        # Calculate activation fraction ablated
-        ablated_activation_sum = sum(
-            feat['activation'] 
-            for feat in baseline_top_features 
-            if feat['feature_id'] in ablated_set
-        )
         baseline_total_activation = baseline_features.get('total_activation', 0.0)
+
+        # Activation mass attributed to ablation: prefer full baseline max vector when provided
+        # (sums baseline strength for every ablated latent, including similarity-expanded ones).
+        if baseline_sae_max_per_latent is not None:
+            vec = np.asarray(baseline_sae_max_per_latent, dtype=np.float64).ravel()
+            ablated_activation_sum = float(
+                sum(vec[f] for f in ablated_set if 0 <= int(f) < vec.shape[0])
+            )
+        else:
+            ablated_activation_sum = sum(
+                feat['activation']
+                for feat in baseline_top_features
+                if feat['feature_id'] in ablated_set
+            )
         
         if baseline_total_activation > 0:
             ablation_fraction = ablated_activation_sum / baseline_total_activation
         else:
             ablation_fraction = 0.0
         
-        self.headlines.append({
+        row = {
             "row_id": int(prompt_idx),
             "prompt": prompt_text,
             "predicted_label": predicted_label,
@@ -337,8 +351,11 @@ class HeadlineFeatureAggregator:
             "ablated_features": sorted(int(fid) for fid in ablated_set),
             "num_ablated_features": int(num_ablated_features),
             "total_baseline_features": int(total_baseline_features),
-            "ablation_fraction": float(ablation_fraction)
-        })
+            "ablation_fraction": float(ablation_fraction),
+        }
+        if seed_features is not None:
+            row["seed_features"] = sorted(int(x) for x in seed_features)
+        self.headlines.append(row)
     
     def export(self):
         """Export all headline data."""

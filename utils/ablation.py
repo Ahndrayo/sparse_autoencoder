@@ -6,6 +6,7 @@ import torch
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 from sklearn.model_selection import StratifiedKFold
+from tqdm.auto import tqdm
 
 from utils.analysis import FeatureStatsAggregator
 
@@ -343,8 +344,11 @@ def run_baseline_inference(
     feature_stats_baseline=None,
     top_token_tracker_baseline=None,
     sample_indices: Optional[Sequence[int]] = None,
+    show_progress: bool = True,
 ) -> Tuple[List[Dict], Dict, float, List[Dict[str, Any]], np.ndarray]:
     """Run baseline inference without ablation.
+
+    Uses a tqdm progress bar over samples when ``show_progress`` is True.
 
     Returns:
         baseline_sae_max_full: float32 array of shape (n_samples, latent_dim). Per sample, each
@@ -364,7 +368,13 @@ def run_baseline_inference(
     n_iter = len(iter_indices)
 
     with torch.no_grad():
-        for pos, sample_idx in enumerate(iter_indices):
+        for pos, sample_idx in tqdm(
+            enumerate(iter_indices),
+            total=n_iter,
+            desc="Baseline",
+            leave=True,
+            disable=not show_progress,
+        ):
             sample = test_ds[sample_idx]
 
             text = sample["text"]
@@ -522,9 +532,6 @@ def run_baseline_inference(
                     np.zeros(latent_dim, dtype=np.float32) if latent_dim > 0 else np.array([], dtype=np.float32)
                 )
 
-            if (pos + 1) % 20 == 0:
-                print(f"  Baseline: {pos + 1}/{n_iter} samples")
-
     baseline_accuracy = (
         sum(1 for r in baseline_results if r["predicted_id"] == test_ds[r["sample_idx"]]["label"])
         / len(baseline_results)
@@ -562,8 +569,18 @@ def run_ablation_inference(
     parent_features_to_ablate: Optional[List[int]] = None,
     sample_indices: Optional[Sequence[int]] = None,
     feature_stats_baseline: Optional[FeatureStatsAggregator] = None,
+    show_progress: bool = True,
+    baseline_sae_max_full: Optional[np.ndarray] = None,
 ) -> Tuple[List[Dict], List[Dict], Dict[str, List[int]], set, float]:
-    """Run ablation inference with feature intervention."""
+    """Run ablation inference with feature intervention.
+
+    Uses a tqdm progress bar over samples when ``show_progress`` is True.
+
+    ``baseline_sae_max_full`` (optional): array of shape ``(n_samples, latent_dim)`` aligned with
+    the same sample order as this run (row ``pos``). When provided, headline ``ablation_fraction``
+    uses the sum of baseline max activations over **all** ablated feature ids, not only those in
+    the stored baseline top-k list.
+    """
     skip_hooks = ablation_config.get("skip_sae_reconstruction", False)
     ablated_results = []
     all_prompt_metadata_ablated = []
@@ -593,7 +610,13 @@ def run_ablation_inference(
         hook_handle = target_layer.register_forward_hook(intervention_hook)
 
     with torch.no_grad():
-        for pos, sample_idx in enumerate(iter_indices):
+        for pos, sample_idx in tqdm(
+            enumerate(iter_indices),
+            total=n_iter,
+            desc="Ablation",
+            leave=True,
+            disable=not show_progress,
+        ):
             sample = test_ds[sample_idx]
 
             text = sample["text"]
@@ -674,8 +697,9 @@ def run_ablation_inference(
                         for f in baseline_features_map[pos]["top_features"][: ablation_config["k"]]
                     ]
             else:
+                # Full expanded list matches what the intervention hook zeroes (group / global ablation).
                 features_ablated_for_this_sample = (
-                    parent_features_to_ablate if parent_features_to_ablate is not None else features_to_ablate
+                    list(features_to_ablate) if features_to_ablate is not None else []
                 )
 
             ablated_results.append(
@@ -725,10 +749,12 @@ def run_ablation_inference(
                         features_for_tracking = features_ablated_for_this_sample
                     else:
                         features_for_tracking = (
-                            parent_features_to_ablate
-                            if parent_features_to_ablate is not None
-                            else features_to_ablate
+                            list(features_to_ablate) if features_to_ablate is not None else []
                         )
+
+                    baseline_sae_row = None
+                    if baseline_sae_max_full is not None and pos < int(baseline_sae_max_full.shape[0]):
+                        baseline_sae_row = baseline_sae_max_full[pos]
 
                     headline_aggregator_ablated.add_headline_with_ablation_metrics(
                         prompt_idx=pos,
@@ -743,6 +769,10 @@ def run_ablation_inference(
                         features_to_ablate=features_for_tracking,
                         baseline_prediction=baseline_data["predicted_label"],
                         baseline_confidence=baseline_data["confidence"],
+                        seed_features=parent_features_to_ablate
+                        if ablation_config["mode"] != "per_sample_top_k"
+                        else None,
+                        baseline_sae_max_per_latent=baseline_sae_row,
                     )
 
                     all_prompt_metadata_ablated.append(
@@ -755,9 +785,6 @@ def run_ablation_inference(
                             "correct": pred_id == true_label,
                         }
                     )
-
-            if (pos + 1) % 20 == 0:
-                print(f"  Ablated: {pos + 1}/{n_iter} samples")
 
     if not skip_hooks and ablation_config["mode"] != "per_sample_top_k":
         hook_handle.remove()

@@ -66,6 +66,8 @@ export type HeadlineInfo = {
     token_str: string;
   }>;
   // Ablation metrics (optional, only present for ablation runs)
+  ablated_features?: number[];
+  seed_features?: number[];
   num_ablated_features?: number;
   total_baseline_features?: number;
   ablation_fraction?: number;
